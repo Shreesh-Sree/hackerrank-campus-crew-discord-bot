@@ -361,6 +361,39 @@ def init_db() -> None:
         conn.commit()
         log.info("SQLite database initialized at %s", _SQLITE_PATH)
 
+    _apply_migrations()
+
+
+_SQLITE_MIGRATIONS = [
+    ("ambassador_profiles", "country", "TEXT NOT NULL DEFAULT ''"),
+    ("ambassador_profiles", "region", "TEXT NOT NULL DEFAULT ''"),
+    ("ambassador_profiles", "timezone_str", "TEXT NOT NULL DEFAULT 'UTC'"),
+    ("ambassador_points", "country", "TEXT NOT NULL DEFAULT ''"),
+    ("ambassador_points", "region", "TEXT NOT NULL DEFAULT ''"),
+]
+
+
+def _apply_migrations() -> None:
+    if _using_postgres:
+        conn = _get_pg_conn()
+        for table, col, typedef in _SQLITE_MIGRATIONS:
+            pg_type = typedef.replace("TEXT", "TEXT").replace("INTEGER", "BIGINT")
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {pg_type}")
+                conn.commit()
+                log.info("Migration: added %s.%s", table, col)
+            except Exception:
+                conn.rollback()
+    else:
+        conn = _get_sqlite_conn()
+        for table, col, typedef in _SQLITE_MIGRATIONS:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
+                conn.commit()
+                log.info("Migration: added %s.%s", table, col)
+            except sqlite3.OperationalError:
+                pass
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -725,13 +758,6 @@ def get_country_leaderboard(country: str, limit: int = 10) -> list[dict[str, Any
     return _fetchall(
         "SELECT * FROM ambassador_points WHERE country=? ORDER BY total_points DESC LIMIT ?",
         (country, limit),
-    )
-
-
-def get_college_leaderboard(college_name: str, limit: int = 10) -> list[dict[str, Any]]:
-    return _fetchall(
-        "SELECT * FROM ambassador_points WHERE college_name=? ORDER BY total_points DESC LIMIT ?",
-        (college_name, limit),
     )
 
 

@@ -12,7 +12,6 @@ from src.db import (
     award_points,
     close_db,
     get_ambassador_points,
-    get_college_leaderboard,
     get_national_leaderboard,
     init_db,
 )
@@ -115,16 +114,6 @@ class TestLeaderboard:
         lb = get_national_leaderboard(limit=3)
         assert len(lb) == 3
 
-    def test_college_leaderboard(self) -> None:
-        self._seed_ambassadors()
-        lb = get_college_leaderboard("MIT", limit=10)
-        assert len(lb) == 3
-        assert lb[0]["ambassador_name"] == "Echo"
-
     def test_empty_leaderboard(self) -> None:
         lb = get_national_leaderboard(limit=10)
-        assert lb == []
-
-    def test_college_leaderboard_empty(self) -> None:
-        lb = get_college_leaderboard("Nonexistent University", limit=10)
         assert lb == []

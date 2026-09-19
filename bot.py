@@ -172,17 +172,29 @@ async def on_message(message: discord.Message) -> None:
     lock = _user_locks[message.author.id]
 
     async with lock:
-        # Run sentinel classification first WITHOUT typing indicator
-        from src.graph import sentinel_node
-        sentinel_result = await sentinel_node(state)
-        if sentinel_result.get("verdict") == "DISMISS":
+        # Run sentinel-only classification WITHOUT typing indicator
+        from src.rubrics import has_campus_crew_intent, is_noise
+
+        text = message.content.strip()
+        should_engage = is_dm or is_mention
+
+        if not should_engage and not is_noise(text):
+            should_engage = has_campus_crew_intent(text)
+
+        if not should_engage and is_noise(text):
             return
 
-        # Only show typing for messages we'll actually respond to
+        # For ambiguous messages, run the full pipeline (sentinel will use LLM)
+        # For clear ENGAGE cases, show typing immediately
         try:
-            async with message.channel.typing():
-                state.update(sentinel_result)  # type: ignore[arg-type]
+            if should_engage:
+                async with message.channel.typing():
+                    result = await pipeline.ainvoke(state)
+            else:
                 result = await pipeline.ainvoke(state)
+                if result.get("verdict") == "DISMISS":
+                    return
+                # Late ENGAGE — send response without typing (already computed)
         except Exception:
             log.exception("Pipeline error for message from %s", message.author)
             return
