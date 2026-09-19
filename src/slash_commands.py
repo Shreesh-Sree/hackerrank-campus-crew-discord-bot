@@ -611,3 +611,328 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         embed = discord.Embed(title="Event Pre-Flight Check", description=checklist, color=color)
         embed.set_footer(text="Run this check 24-48 hours before your event.")
         await interaction.response.send_message(embed=embed)
+
+    # ── /onboard ──────────────────────────────────────────────────────────
+
+    @tree.command(name="onboard", description="Interactive onboarding walkthrough for new ambassadors")
+    async def onboard_cmd(interaction: discord.Interaction) -> None:
+        upsert_ambassador_profile(
+            ambassador_id=interaction.user.id,
+            ambassador_name=interaction.user.display_name,
+        )
+        embed = discord.Embed(
+            title="Welcome to HackerRank Campus Crew!",
+            description="Let's get you set up. Complete each step below to be fully onboarded.",
+            color=discord.Color.green(),
+        )
+        embed.add_field(
+            name="Step 1: Platform Access",
+            value=(
+                "- [ ] Check email (incl. spam) for HRW activation invite\n"
+                "- [ ] Log in at `hackerrank.com/work/login`\n"
+                "- [ ] If HRW not yet active, use **HRC** (`hackerrank.com`) to host your first event"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Step 2: Golden Rules",
+            value=(
+                "- **NEVER** access the Chakra tab in HRW (internal only)\n"
+                "- **NEVER** use SkillUp to host events\n"
+                "- Always set 15-30 min buffer time on contests\n"
+                "- Active participant = submitted code, not just registered"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Step 3: Your First Event",
+            value=(
+                "- Use `/sop contest` for a step-by-step checklist\n"
+                "- Use `/rewards` to check reward tiers\n"
+                "- Use `/marketing` to generate promo copy"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Step 4: Know Your Leads",
+            value=(
+                "- **Sanskruti** (Program Manager): rewards, kits, speakers\n"
+                "- **Sreesanth** (Technical Lead): HRW bugs, platform access\n"
+                "- **Nitish** (Design Lead): logos, cert templates, brand assets\n"
+                "- Use `/escalate` for urgent issues"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="Use /set_stage to track your event lifecycle progress.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ── /resources ────────────────────────────────────────────────────────
+
+    @tree.command(name="resources", description="Ambassador resource hub — brand kit, templates, docs")
+    async def resources_cmd(interaction: discord.Interaction) -> None:
+        embed = discord.Embed(
+            title="Ambassador Resource Hub",
+            color=discord.Color.purple(),
+        )
+        embed.add_field(
+            name="Brand Assets",
+            value=(
+                "Contact **Nitish (Design Lead)** for:\n"
+                "- Official HackerRank logo pack (PNG, SVG)\n"
+                "- Certificate Canva templates\n"
+                "- Event poster templates\n"
+                "- Brand guideline document"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Templates & SOPs",
+            value=(
+                "- `/sop contest` — Coding contest checklist\n"
+                "- `/sop hackathon` — Hackathon SOP\n"
+                "- `/sop workshop` — Workshop SOP\n"
+                "- `/certs` — Certificate generation guide\n"
+                "- `/marketing` — Promo copy generator"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Official Handbook",
+            value="handbook.hackerrankcampuscrew.xyz",
+            inline=False,
+        )
+        embed.add_field(
+            name="Quick Reference",
+            value=(
+                "- `/rules hrw` — HRW platform rules\n"
+                "- `/rewards` — Reward tier calculator\n"
+                "- `/event_check` — Pre-flight URL validator\n"
+                "- `/escalate` — Escalate to a lead"
+            ),
+            inline=False,
+        )
+        await interaction.response.send_message(embed=embed)
+
+    # ── /request_letter ───────────────────────────────────────────────────
+
+    class LetterRequestModal(ui.Modal, title="Request Permission Letter"):
+        ambassador_name = ui.TextInput(label="Your Full Name", required=True, max_length=100)
+        college_name = ui.TextInput(label="College / Institution Name", required=True, max_length=200)
+        event_name = ui.TextInput(label="Event Name", required=True, max_length=200)
+        event_date = ui.TextInput(label="Event Date (e.g. 25 October 2026)", required=True, max_length=50)
+        additional_info = ui.TextInput(
+            label="Additional Details",
+            style=discord.TextStyle.paragraph,
+            required=False,
+            max_length=500,
+            placeholder="Any specific requirements for the letter...",
+        )
+
+        async def on_submit(self, interaction: discord.Interaction) -> None:
+            category = "OPS"
+            urgency = "P2"
+            desc = (
+                f"Permission Letter Request\n"
+                f"Ambassador: {self.ambassador_name.value}\n"
+                f"College: {self.college_name.value}\n"
+                f"Event: {self.event_name.value}\n"
+                f"Date: {self.event_date.value}\n"
+                f"Notes: {self.additional_info.value or 'None'}"
+            )
+            ticket = create_ticket(
+                channel_id=interaction.channel_id or 0,
+                message_id=0,
+                author_id=interaction.user.id,
+                author_name=str(interaction.user),
+                category=category,
+                urgency=urgency,
+                poc_name="sanskruti",
+                poc_id=_get_poc_id("sanskruti"),
+                description=desc,
+            )
+            await interaction.response.send_message(
+                f"Letter request **{ticket['ticket_code']}** submitted to **Sanskruti (Program Manager)**. "
+                f"Please allow 7 business days for processing.",
+                ephemeral=True,
+            )
+
+    @tree.command(name="request_letter", description="Request an institutional permission letter from HackerRank")
+    async def request_letter_cmd(interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(LetterRequestModal())
+
+    # ── /request_speaker ──────────────────────────────────────────────────
+
+    class SpeakerRequestModal(ui.Modal, title="Request Speaker / Judge"):
+        event_name = ui.TextInput(label="Event Name", required=True, max_length=200)
+        event_date = ui.TextInput(label="Event Date (e.g. 15 November 2026)", required=True, max_length=50)
+        role_type = ui.TextInput(label="Role Needed (Speaker / Judge / Both)", required=True, max_length=50)
+        topic = ui.TextInput(label="Topic or Track", required=False, max_length=200)
+        audience_size = ui.TextInput(label="Expected Audience Size", required=True, max_length=20)
+
+        async def on_submit(self, interaction: discord.Interaction) -> None:
+            desc = (
+                f"Speaker/Judge Request\n"
+                f"Event: {self.event_name.value}\n"
+                f"Date: {self.event_date.value}\n"
+                f"Role: {self.role_type.value}\n"
+                f"Topic: {self.topic.value or 'Open'}\n"
+                f"Audience: {self.audience_size.value}"
+            )
+
+            from datetime import datetime
+            try:
+                evt_date = datetime.strptime(self.event_date.value.strip(), "%d %B %Y")
+                days_ahead = (evt_date - datetime.now()).days
+                if days_ahead < 14:
+                    await interaction.response.send_message(
+                        f"Speaker/judge requests require **14 days advance notice**. "
+                        f"Your event is only {days_ahead} days away. "
+                        f"Please plan earlier for future events.",
+                        ephemeral=True,
+                    )
+                    return
+            except ValueError:
+                pass
+
+            ticket = create_ticket(
+                channel_id=interaction.channel_id or 0,
+                message_id=0,
+                author_id=interaction.user.id,
+                author_name=str(interaction.user),
+                category="OPS",
+                urgency="P1",
+                poc_name="sanskruti",
+                poc_id=_get_poc_id("sanskruti"),
+                description=desc,
+            )
+            await interaction.response.send_message(
+                f"Speaker/judge request **{ticket['ticket_code']}** submitted to "
+                f"**Sanskruti (Program Manager)**. "
+                f"You will be notified once availability is confirmed.\n\n"
+                f"**Important:** Do not announce a HackerRank speaker publicly until confirmed.",
+                ephemeral=True,
+            )
+
+    @tree.command(name="request_speaker", description="Request a HackerRank engineer speaker or judge")
+    async def request_speaker_cmd(interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(SpeakerRequestModal())
+
+    # ── /verify_emails ────────────────────────────────────────────────────
+
+    INSTITUTIONAL_DOMAINS = {
+        ".edu", ".ac.in", ".edu.in", ".ac.uk", ".edu.au", ".edu.cn",
+        ".ac.jp", ".edu.sg", ".edu.my", ".ac.id",
+    }
+
+    @tree.command(name="verify_emails", description="Check winner emails before reward submission")
+    @app_commands.describe(emails="Comma-separated list of winner emails")
+    async def verify_emails_cmd(interaction: discord.Interaction, emails: str) -> None:
+        email_list = [e.strip() for e in emails.split(",") if e.strip()]
+        if not email_list:
+            await interaction.response.send_message("Please provide at least one email.", ephemeral=True)
+            return
+
+        email_re = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+        warnings: list[str] = []
+        valid_count = 0
+
+        for email in email_list:
+            if not email_re.match(email):
+                warnings.append(f"**{email}** — invalid format")
+                continue
+            domain = email[email.index("@"):]
+            is_institutional = any(domain.endswith(d) for d in INSTITUTIONAL_DOMAINS)
+            if is_institutional:
+                warnings.append(f"**{email}** — institutional domain detected, may not match HackerRank profile")
+            else:
+                valid_count += 1
+
+        embed = discord.Embed(title="Email Verification Results", color=discord.Color.teal())
+        embed.add_field(name="Checked", value=str(len(email_list)), inline=True)
+        embed.add_field(name="Likely OK", value=str(valid_count), inline=True)
+        embed.add_field(name="Warnings", value=str(len(warnings)), inline=True)
+
+        if warnings:
+            embed.add_field(name="Issues Found", value="\n".join(warnings[:10]), inline=False)
+
+        embed.add_field(
+            name="Reminder",
+            value=(
+                "Rewards are activated on HackerRank user profiles. "
+                "Confirm that each winner's email matches their **registered HackerRank account email**, "
+                "not a college roll-number address."
+            ),
+            inline=False,
+        )
+        await interaction.response.send_message(embed=embed)
+
+    # ── /my_status ────────────────────────────────────────────────────────
+
+    @tree.command(name="my_status", description="Your monthly compliance dashboard and event history")
+    async def my_status_cmd(interaction: discord.Interaction) -> None:
+        uid = interaction.user.id
+        profile = get_ambassador_profile(uid)
+        events = get_ambassador_events(uid)
+
+        from datetime import datetime, timezone
+        month_name = datetime.now(timezone.utc).strftime("%B %Y")
+
+        embed = discord.Embed(
+            title=f"Ambassador Status — {month_name}",
+            color=discord.Color.teal(),
+        )
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+
+        embed.add_field(
+            name="Ambassador",
+            value=interaction.user.display_name,
+            inline=True,
+        )
+
+        college = (profile["college_name"] if profile and profile["college_name"] else "Not set")
+        embed.add_field(name="Institution", value=college, inline=True)
+
+        stage = profile["current_stage"] if profile else "PLANNING"
+        stage_emoji = {
+            "PLANNING": "📋", "SETUP": "🔧", "OUTREACH": "📢", "LIVE": "🔴", "REWARDS": "🏆"
+        }
+        embed.add_field(
+            name="Current Stage",
+            value=f"{stage_emoji.get(stage, '?')} {stage}",
+            inline=True,
+        )
+
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(day=1).strftime("%Y-%m")
+        monthly_events = [e for e in events if e["created_at"].startswith(month_start)]
+
+        if monthly_events:
+            total_p = sum(e["participant_count"] for e in monthly_events)
+            has_merch = any(e["merch_eligible"] for e in monthly_events)
+            embed.add_field(
+                name=f"Monthly Events ({len(monthly_events)})",
+                value=(
+                    f"**Participants:** {total_p}\n"
+                    f"**Merch Tier:** {'Yes' if has_merch else 'No'}"
+                ),
+                inline=True,
+            )
+            compliance = "ACTIVE & COMPLIANT"
+            comp_color = discord.Color.green()
+        else:
+            embed.add_field(name="Monthly Events", value="No events this month yet.", inline=True)
+            compliance = "PENDING — no event recorded this month"
+            comp_color = discord.Color.orange()
+
+        embed.add_field(name="Standing", value=f"**{compliance}**", inline=False)
+
+        if events:
+            recent = events[:3]
+            history = "\n".join(
+                f"- **{e['event_name']}** ({e['event_date'] or '—'}) — {e['participant_count']}p"
+                for e in recent
+            )
+            embed.add_field(name="Recent Events", value=history, inline=False)
+
+        embed.set_footer(text="Use /set_stage to update your lifecycle. Run at least 1 event/month.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
