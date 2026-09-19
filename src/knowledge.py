@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,12 +19,14 @@ _knowledge: dict[str, Any] | None = None
 _reference_docs: dict[str, str] = {}
 _reference_chunks: list[tuple[str, str]] = []
 
+_last_load_time: float = 0.0
+
 _CHUNK_SIZE = 600
 _CHUNK_OVERLAP = 80
 
 
 def load_knowledge() -> dict[str, Any]:
-    global _knowledge
+    global _knowledge, _last_load_time
     if _knowledge is not None:
         return _knowledge
 
@@ -34,12 +38,13 @@ def load_knowledge() -> dict[str, Any]:
     with open(_KNOWLEDGE_FILE, encoding="utf-8") as f:
         _knowledge = yaml.safe_load(f) or {}
 
+    _last_load_time = time.time()
     log.info("Loaded knowledge tree with %d top-level keys", len(_knowledge))
     return _knowledge
 
 
 def load_references() -> dict[str, str]:
-    global _reference_docs, _reference_chunks
+    global _reference_docs, _reference_chunks, _last_load_time
     if _reference_docs:
         return _reference_docs
 
@@ -53,8 +58,41 @@ def load_references() -> dict[str, str]:
         log.info("Loaded reference doc: %s (%d chars)", md_file.stem, len(content))
 
     _reference_chunks = _chunk_all_references()
+    _last_load_time = time.time()
     log.info("Indexed %d reference chunks for RAG retrieval", len(_reference_chunks))
     return _reference_docs
+
+
+def reload_all() -> None:
+    """Force-reload knowledge tree and all reference documents unconditionally."""
+    global _knowledge, _reference_docs, _reference_chunks, _last_load_time
+    _knowledge = None
+    _reference_docs = {}
+    _reference_chunks = []
+    _last_load_time = 0.0
+    load_knowledge()
+    load_references()
+    log.info("Force-reloaded all knowledge sources")
+
+
+def check_and_reload() -> bool:
+    """Check mtimes on knowledge sources; reload if any changed. Returns True if reloaded."""
+    global _last_load_time
+    if _last_load_time == 0.0:
+        return False
+
+    newest = 0.0
+    if _KNOWLEDGE_FILE.exists():
+        newest = max(newest, os.path.getmtime(_KNOWLEDGE_FILE))
+    if _REFERENCES_DIR.is_dir():
+        for f in _REFERENCES_DIR.glob("*.md"):
+            newest = max(newest, os.path.getmtime(f))
+
+    if newest > _last_load_time:
+        log.info("Knowledge source change detected (mtime %.0f > %.0f), hot-reloading", newest, _last_load_time)
+        reload_all()
+        return True
+    return False
 
 
 def _chunk_all_references() -> list[tuple[str, str]]:

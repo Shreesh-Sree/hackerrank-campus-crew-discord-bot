@@ -42,5 +42,12 @@ class Settings(BaseSettings):
     # Discord message limits
     max_message_length: int = Field(default=2000, ge=500)
 
+    # Production operations
+    log_level: str = "INFO"
+    health_check_interval: int = 60
+    knowledge_reload_interval: int = 300
+    max_conversation_turns: int = 8
+    db_path: str = "data/hrcc.db"
+
 
 settings = Settings()  # type: ignore[call-arg]

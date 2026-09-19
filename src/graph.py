@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
+import re
+import time
 from typing import Any, TypedDict
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from src.knowledge import build_context_block, get_reward_tier
 from src.llm_client import get_classifier_llm, get_llm
@@ -21,6 +24,12 @@ from src.rubrics import (
 
 log = logging.getLogger("hrcc.graph")
 
+_SKILLUP_HOST_RE = re.compile(
+    r"(host|run|conduct|organize|hold).{0,40}(skillup|skill\s*up)"
+    r"|use\s+(skillup|skill\s*up)\s+.{0,30}(event|contest|hackathon|test|workshop)",
+    re.IGNORECASE,
+)
+
 
 class PipelineState(TypedDict, total=False):
     message_content: str
@@ -30,6 +39,7 @@ class PipelineState(TypedDict, total=False):
     is_dm: bool
     is_mention: bool
     is_bot: bool
+    conversation_history: list[dict[str, str]]
 
     verdict: str
     knowledge_context: str
@@ -37,6 +47,8 @@ class PipelineState(TypedDict, total=False):
     final_chunks: list[str]
     escalation_target: str | None
     error: str | None
+    _t0: float
+    latency_ms: float
 
 
 # ---------------------------------------------------------------------------
@@ -56,20 +68,22 @@ CLASSIFIER_SYSTEM_PROMPT = (
 
 
 async def sentinel_node(state: PipelineState) -> dict[str, Any]:
+    t0 = time.monotonic()
+
     if state.get("is_bot"):
-        return {"verdict": "DISMISS"}
+        return {"verdict": "DISMISS", "_t0": t0}
 
     if state.get("is_dm") or state.get("is_mention"):
-        return {"verdict": "ENGAGE"}
+        return {"verdict": "ENGAGE", "_t0": t0}
 
     text = state["message_content"].strip()
 
     if is_noise(text):
         log.debug("Sentinel: noise gate caught '%s'", text[:60])
-        return {"verdict": "DISMISS"}
+        return {"verdict": "DISMISS", "_t0": t0}
 
     if has_campus_crew_intent(text):
-        return {"verdict": "ENGAGE"}
+        return {"verdict": "ENGAGE", "_t0": t0}
 
     try:
         classifier = get_classifier_llm()
@@ -79,11 +93,11 @@ async def sentinel_node(state: PipelineState) -> dict[str, Any]:
         ])
         decision = result.content.strip().upper()
         if "REPLY" in decision and "NO_REPLY" not in decision:
-            return {"verdict": "ENGAGE"}
-        return {"verdict": "DISMISS"}
+            return {"verdict": "ENGAGE", "_t0": t0}
+        return {"verdict": "DISMISS", "_t0": t0}
     except Exception:
         log.exception("Sentinel LLM classification failed, defaulting to DISMISS")
-        return {"verdict": "DISMISS"}
+        return {"verdict": "DISMISS", "_t0": t0}
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +126,14 @@ async def knowledge_node(state: PipelineState) -> dict[str, Any]:
             "The Chakra tab is STRICTLY INTERNAL to HackerRank enterprise staff. "
             "Ambassadors must NEVER access, click, or trigger anything via Chakra. "
             "For mock interviews, advise requesting mock interview vouchers from Sanskruti (Program Manager)."
+        )
+
+    if _SKILLUP_HOST_RE.search(text):
+        context_parts.append(
+            "\n## CRITICAL PLATFORM RULE\n"
+            "SkillUp (hackerrank.com/skillup) is STRICTLY for self-paced student learning. "
+            "It must NEVER be used to host campus events, coding contests, or hackathons. "
+            "Use HRW or HRC instead."
         )
 
     escalation = detect_escalation_target(text)
@@ -166,18 +188,30 @@ async def replier_node(state: PipelineState) -> dict[str, Any]:
 
     escalation = state.get("escalation_target")
     if escalation:
-        suffix = (
+        system_prompt += (
             f"\n\nNote: Based on the ambassador's query, this may need escalation to "
             f"the appropriate lead ({escalation.title()}). Include escalation guidance in your response."
         )
-        system_prompt += suffix
+
+    messages: list[SystemMessage | HumanMessage | AIMessage] = [
+        SystemMessage(content=system_prompt),
+    ]
+
+    for entry in state.get("conversation_history") or []:
+        role = entry.get("role", "")
+        content = entry.get("content", "")
+        if not content:
+            continue
+        if role == "assistant":
+            messages.append(AIMessage(content=content))
+        else:
+            messages.append(HumanMessage(content=content))
+
+    messages.append(HumanMessage(content=text))
 
     try:
         llm = get_llm()
-        result = await llm.ainvoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=text),
-        ])
+        result = await llm.ainvoke(messages)
         return {"raw_response": result.content.strip()}
     except Exception as exc:
         log.exception("Replier LLM call failed")
@@ -196,13 +230,15 @@ async def replier_node(state: PipelineState) -> dict[str, Any]:
 
 async def auditor_node(state: PipelineState) -> dict[str, Any]:
     response = state.get("raw_response", "")
+    user_text = state["message_content"]
 
     response = scrub_secrets(response)
 
-    if contains_chakra_reference(state["message_content"]):
-        chakra_check = response.lower()
-        if "access" in chakra_check and "chakra" in chakra_check:
-            if "never" not in chakra_check and "must not" not in chakra_check and "do not" not in chakra_check:
+    # Chakra guard
+    if contains_chakra_reference(user_text):
+        resp_lower = response.lower()
+        if "chakra" in resp_lower and "access" in resp_lower:
+            if not any(w in resp_lower for w in ("never", "must not", "do not", "don't", "strictly")):
                 response = (
                     "**Important:** The **Chakra** tab in HackerRank for Work is strictly internal "
                     "to HackerRank staff. As an ambassador, you must **never** access or click on it.\n\n"
@@ -210,9 +246,26 @@ async def auditor_node(state: PipelineState) -> dict[str, Any]:
                     "from **Sanskruti (Program Manager)**."
                 )
 
+    # SkillUp hosting guard
+    if _SKILLUP_HOST_RE.search(user_text):
+        resp_lower = response.lower()
+        if not any(w in resp_lower for w in ("never", "must not", "do not", "don't", "cannot", "not used")):
+            response = (
+                "**Important:** **HackerRank SkillUp** (`hackerrank.com/skillup`) is strictly for "
+                "self-paced student learning and certifications. It must **never** be used to host "
+                "campus events, coding contests, or hackathons.\n\n"
+                "To host your event, use **HackerRank for Work (HRW)** as the primary platform, "
+                "or **HackerRank Community (HRC)** as a fallback if your HRW access is still pending."
+            )
+
     chunks = chunk_message(response)
 
-    return {"final_chunks": chunks}
+    t0 = state.get("_t0", 0.0)
+    latency = (time.monotonic() - t0) * 1000 if t0 else 0.0
+    if latency > 0:
+        log.info("Pipeline latency: %.1fms (author=%s)", latency, state.get("author_name", "?"))
+
+    return {"final_chunks": chunks, "latency_ms": latency}
 
 
 # ---------------------------------------------------------------------------
@@ -246,10 +299,10 @@ def build_pipeline() -> StateGraph:
     return graph
 
 
-_compiled_pipeline = None
+_compiled_pipeline: CompiledStateGraph | None = None
 
 
-def get_pipeline():
+def get_pipeline() -> CompiledStateGraph:
     global _compiled_pipeline
     if _compiled_pipeline is None:
         _compiled_pipeline = build_pipeline().compile()
