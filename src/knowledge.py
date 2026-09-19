@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,10 @@ _REFERENCES_DIR = _ROOT / "references"
 
 _knowledge: dict[str, Any] | None = None
 _reference_docs: dict[str, str] = {}
+_reference_chunks: list[tuple[str, str]] = []
+
+_CHUNK_SIZE = 600
+_CHUNK_OVERLAP = 80
 
 
 def load_knowledge() -> dict[str, Any]:
@@ -34,7 +39,7 @@ def load_knowledge() -> dict[str, Any]:
 
 
 def load_references() -> dict[str, str]:
-    global _reference_docs
+    global _reference_docs, _reference_chunks
     if _reference_docs:
         return _reference_docs
 
@@ -43,10 +48,75 @@ def load_references() -> dict[str, str]:
         return _reference_docs
 
     for md_file in sorted(_REFERENCES_DIR.glob("*.md")):
-        _reference_docs[md_file.stem] = md_file.read_text(encoding="utf-8")
-        log.info("Loaded reference doc: %s (%d chars)", md_file.stem, len(_reference_docs[md_file.stem]))
+        content = md_file.read_text(encoding="utf-8")
+        _reference_docs[md_file.stem] = content
+        log.info("Loaded reference doc: %s (%d chars)", md_file.stem, len(content))
 
+    _reference_chunks = _chunk_all_references()
+    log.info("Indexed %d reference chunks for RAG retrieval", len(_reference_chunks))
     return _reference_docs
+
+
+def _chunk_all_references() -> list[tuple[str, str]]:
+    chunks: list[tuple[str, str]] = []
+    for doc_name, content in _reference_docs.items():
+        sections = re.split(r"\n#{1,3}\s+", content)
+        for section in sections:
+            section = section.strip()
+            if not section or len(section) < 30:
+                continue
+
+            if len(section) <= _CHUNK_SIZE:
+                chunks.append((doc_name, section))
+            else:
+                words = section.split()
+                start = 0
+                while start < len(words):
+                    end = start + _CHUNK_SIZE // 4
+                    chunk_text = " ".join(words[start:end])
+                    if chunk_text.strip():
+                        chunks.append((doc_name, chunk_text))
+                    start = end - (_CHUNK_OVERLAP // 4)
+    return chunks
+
+
+def retrieve_relevant_chunks(query: str, top_k: int = 5) -> list[str]:
+    if not _reference_chunks:
+        load_references()
+
+    query_tokens = set(re.findall(r"\b\w{3,}\b", query.lower()))
+    if not query_tokens:
+        return []
+
+    scored: list[tuple[float, str, str]] = []
+    for doc_name, chunk_text in _reference_chunks:
+        chunk_lower = chunk_text.lower()
+        chunk_tokens = set(re.findall(r"\b\w{3,}\b", chunk_lower))
+
+        overlap = query_tokens & chunk_tokens
+        if not overlap:
+            continue
+
+        score = len(overlap)
+        for token in overlap:
+            score += chunk_lower.count(token) * 0.3
+
+        scored.append((score, doc_name, chunk_text))
+
+    scored.sort(key=lambda x: -x[0])
+
+    results: list[str] = []
+    seen_prefixes: set[str] = set()
+    for _score, doc_name, chunk_text in scored[:top_k * 2]:
+        prefix = chunk_text[:100]
+        if prefix in seen_prefixes:
+            continue
+        seen_prefixes.add(prefix)
+        results.append(f"[{doc_name}] {chunk_text}")
+        if len(results) >= top_k:
+            break
+
+    return results
 
 
 def get_platform_info(platform_key: str) -> dict[str, Any]:
@@ -73,12 +143,10 @@ def get_certificate_info() -> dict[str, Any]:
     return kb.get("certificates", {})
 
 
-def build_context_block() -> str:
-    """Build the full knowledge context string for the replier system prompt."""
+def build_context_block(query: str = "") -> str:
     kb = load_knowledge()
     sections: list[str] = []
 
-    # Platforms
     for key in ("hrw", "hrc", "skillup"):
         plat = kb.get("platforms", {}).get(key, {})
         if plat:
@@ -99,7 +167,6 @@ def build_context_block() -> str:
             elif isinstance(rules, str):
                 sections.append(f"- {rules}")
 
-    # Rewards
     rewards = kb.get("rewards", {})
     if rewards:
         sections.append("\n## Reward Tiers")
@@ -110,7 +177,6 @@ def build_context_block() -> str:
                 sections.append(f"  - {pkg}")
             sections.append(f"  Merchandise: {'Yes' if tier_data.get('merchandise_included') else 'No'}")
 
-    # Certificates
     certs = kb.get("certificates", {})
     if certs:
         sections.append("\n## Certificates")
@@ -120,7 +186,6 @@ def build_context_block() -> str:
         if schema.get("headers"):
             sections.append(f"CSV Headers: {', '.join(schema['headers'])}")
 
-    # Escalation directory
     escalations = kb.get("escalations", {})
     if escalations:
         sections.append("\n## Escalation Directory")
@@ -130,5 +195,12 @@ def build_context_block() -> str:
             )
             for resp in lead_data.get("responsibilities", []):
                 sections.append(f"  - {resp}")
+
+    if query:
+        relevant = retrieve_relevant_chunks(query, top_k=4)
+        if relevant:
+            sections.append("\n## Relevant Handbook Excerpts")
+            for chunk in relevant:
+                sections.append(chunk)
 
     return "\n".join(sections)

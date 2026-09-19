@@ -92,7 +92,7 @@ async def sentinel_node(state: PipelineState) -> dict[str, Any]:
 
 async def knowledge_node(state: PipelineState) -> dict[str, Any]:
     text = state["message_content"]
-    context_parts: list[str] = [build_context_block()]
+    context_parts: list[str] = [build_context_block(query=text)]
 
     count = extract_participant_count(text)
     if count is not None:
