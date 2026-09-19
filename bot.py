@@ -17,6 +17,7 @@ from src.csv_validator import build_canva_file, build_summary_embed, parse_conte
 from src.db import close_db, init_db, record_event_submission
 from src.escalation_views import PersistentTicketView
 from src.graph import PipelineState, get_pipeline
+from src.incident_cluster import incident_engine
 from src.knowledge import check_and_reload, load_knowledge, load_references
 from src.llm_client import get_llm
 from src.scheduler import setup_scheduler
@@ -141,6 +142,18 @@ async def on_message(message: discord.Message) -> None:
 
     is_dm = isinstance(message.channel, discord.DMChannel)
     is_mention = bot.user is not None and bot.user.mentioned_in(message)
+
+    if not is_dm:
+        incident = incident_engine.ingest(message.content, message.author.id, message.channel.id)
+        if incident and incident.count == 3:
+            await message.channel.send(
+                f"**Platform Incident Detected** — {incident.count} reports in the last 2 minutes.\n"
+                f"We are aware of this issue. **Sreesanth (Technical Lead)** has been notified.\n"
+                f"If HRW is down, use **HRC** (`hackerrank.com`) as a fallback."
+            )
+            return
+        elif incident and incident.count > 3:
+            return
 
     history = memory.get_history(message.author.id)
 
