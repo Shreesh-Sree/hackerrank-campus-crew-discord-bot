@@ -16,7 +16,6 @@ from src.db import (
     find_ambassadors_by_region,
     get_ambassador_points,
     get_ambassador_profile,
-    get_college_leaderboard,
     get_country_leaderboard,
     get_global_leaderboard,
     get_open_collab_requests,
@@ -163,10 +162,6 @@ class TestGeographicLeaderboards:
         lb = get_country_leaderboard("Antarctica", limit=10)
         assert lb == []
 
-    def test_college_leaderboard_still_works(self) -> None:
-        self._seed()
-        lb = get_college_leaderboard("MIT", limit=10)
-        assert len(lb) == 1
 
 
 class TestAmbassadorDiscovery:

@@ -21,7 +21,6 @@ from src.db import (
     get_ambassador_events,
     get_ambassador_points,
     get_ambassador_profile,
-    get_college_leaderboard,
     get_country_leaderboard,
     get_global_leaderboard,
     get_open_collab_requests,
@@ -966,25 +965,17 @@ def register_commands(tree: app_commands.CommandTree) -> None:
 
     # ── /leaderboard ──────────────────────────────────────────────────────
 
-    @tree.command(name="leaderboard", description="Global, region, country, or college leaderboard")
+    @tree.command(name="leaderboard", description="Global, regional, or country ambassador leaderboard")
     @app_commands.describe(scope="Leaderboard scope")
     @app_commands.choices(scope=[
         app_commands.Choice(name="Global (Top 10)", value="global"),
         app_commands.Choice(name="My Region", value="my_region"),
         app_commands.Choice(name="My Country", value="my_country"),
-        app_commands.Choice(name="My College", value="my_college"),
     ])
     async def leaderboard_cmd(interaction: discord.Interaction, scope: app_commands.Choice[str]) -> None:
         profile = get_ambassador_profile(interaction.user.id)
 
-        if scope.value == "my_college":
-            college = profile["college_name"] if profile and profile.get("college_name") else ""
-            if not college:
-                await interaction.response.send_message("Set your profile first with `/set_profile`.", ephemeral=True)
-                return
-            rows = get_college_leaderboard(college, limit=10)
-            title = f"College Leaderboard — {college}"
-        elif scope.value == "my_country":
+        if scope.value == "my_country":
             country = profile["country"] if profile and profile.get("country") else ""
             if not country:
                 await interaction.response.send_message("Set your country first with `/set_profile`.", ephemeral=True)
