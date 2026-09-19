@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     vllm_timeout: float = 30.0
     vllm_max_retries: int = 3
 
+    # Vision model (for screenshot/image analysis via vLLM multimodal)
+    vision_model: str = ""
+    vision_base_url: str = ""
+
     # Generation hyperparameters
     model_temperature: float = 0.1
     model_max_tokens: int = 1500

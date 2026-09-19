@@ -22,6 +22,7 @@ from src.knowledge import check_and_reload, load_knowledge, load_references
 from src.llm_client import get_llm
 from src.scheduler import setup_scheduler
 from src.slash_commands import register_commands
+from src.vision import analyze_screenshot, is_image_attachment
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -126,11 +127,14 @@ async def on_message(message: discord.Message) -> None:
     if message.author.bot:
         return
 
-    # CSV attachment auto-detection
+    # Attachment auto-detection
     if message.attachments:
         for attachment in message.attachments:
             if attachment.filename.lower().endswith((".csv", ".xlsx")):
                 await _handle_csv_upload(message, attachment)
+                return
+            if is_image_attachment(attachment.filename):
+                await _handle_image_upload(message, attachment)
                 return
 
     # Process prefix commands first
@@ -312,6 +316,27 @@ async def _handle_csv_upload(
                 await message.channel.send(
                     f"**New Achievement{'s' if len(badge_lines) > 1 else ''} Unlocked!**\n" + "\n".join(badge_lines)
                 )
+
+
+async def _handle_image_upload(
+    message: discord.Message, attachment: discord.Attachment
+) -> None:
+    async with message.channel.typing():
+        try:
+            image_bytes = await attachment.read()
+        except discord.HTTPException:
+            await message.reply("Could not download the image.", mention_author=False)
+            return
+
+        analysis = await analyze_screenshot(image_bytes, filename=attachment.filename)
+
+        embed = discord.Embed(
+            title="Screenshot Analysis",
+            description=analysis,
+            color=discord.Color.dark_teal(),
+        )
+        embed.set_footer(text="Upload a screenshot of any HRW/HRC error for instant diagnosis.")
+        await message.reply(embed=embed, mention_author=False)
 
 
 # ── Error handlers ────────────────────────────────────────────────────────
