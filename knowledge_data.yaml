@@ -1,0 +1,157 @@
+# ==============================================================================
+# HackerRank Campus Crew — Canonical Vector-less RAG Knowledge Tree
+# Version: 1.0.0
+# Source: Official Ambassador Handbook (handbook.hackerrankcampuscrew.xyz)
+# ==============================================================================
+
+meta:
+  program_name: "HackerRank Campus Crew"
+  duration_months: 6
+  type: "Selective Student Ambassador Program"
+  handbook_url: "https://handbook.hackerrankcampuscrew.xyz"
+  cadence: "Minimum 1 official event per month"
+
+# ------------------------------------------------------------------------------
+# 1. PLATFORM ARCHITECTURE & RULES
+# ------------------------------------------------------------------------------
+platforms:
+  hrw:
+    name: "HackerRank for Work (HRW)"
+    url: "https://hackerrank.com/work/login"
+    type: "Enterprise Recruiter & Assessment Platform"
+    primary_use: "Official monthly campus tests, role-based evaluations, automated scoring"
+    features:
+      - "Automated code execution and hidden testcase grading"
+      - "Full candidate analytics and scorecards"
+      - "Automated proctoring (webcam snapshots, tab-switch tracking)"
+      - "Code plagiarism similarity analyzer"
+    rules:
+      buffer_time: "Closed contests CANNOT be reopened under any circumstance. Always configure 15–30 min buffer time."
+      missing_college: "If university is missing from dropdown, select 'Other' and type the official name."
+      lost_contest_link: "Retrieve test URL directly from tests dashboard; ensure public visibility is enabled."
+    security_warning:
+      tab_name: "Chakra"
+      policy: "STRICT PROHIBITION: The Chakra tab is strictly internal to HackerRank enterprise staff. Ambassadors must NEVER touch, click, or trigger assessments via Chakra. For mock interviews, request mock interview vouchers from Sanskruti."
+
+  hrc:
+    name: "HackerRank Community (HRC)"
+    url: "https://hackerrank.com"
+    contest_creator_url: "https://hackerrank.com/administration/contests/create"
+    type: "Public Community Contest Platform"
+    primary_use: "Fallback platform when HRW access is pending, or for massive concurrent inter-college hackathons"
+    rules:
+      setup: "Create public or private contests using standard challenge library or custom challenges."
+      scoring: "Testcase weighting and public leaderboards supported."
+
+  skillup:
+    name: "HackerRank SkillUp"
+    url: "https://hackerrank.com/skillup"
+    type: "Self-Paced Student Learning & Certification Portal"
+    primary_use: "Individual student practice in Problem Solving, Python, SQL, REST API"
+    rules:
+      prohibition: "STRICT PROHIBITION: Never host a live campus event, coding contest, or hackathon on SkillUp. Use HRW or HRC only."
+
+# ------------------------------------------------------------------------------
+# 2. REWARD TIERS & ACTIVATION
+# ------------------------------------------------------------------------------
+rewards:
+  participant_definition:
+    rule: "An Active Participant MUST attempt and submit code or answers for at least one challenge. Mere registration without submission does NOT count."
+
+  tiers:
+    under_300:
+      threshold: "< 300 active participants"
+      winner_package:
+        - "1-Year HackerRank Infinity Plan"
+        - "Mock Interview Credits"
+        - "6-Month Access to 1,500+ AI Tools"
+      merchandise_included: false
+      certificates: "Official digital participation certificates for all active code submitters"
+
+    tier_300_plus:
+      threshold: "≥ 300 active participants"
+      winner_package:
+        - "1-Year HackerRank Infinity Plan"
+        - "Mock Interview Credits"
+        - "6-Month Access to 1,500+ AI Tools"
+        - "Official HackerRank Physical Merchandise Pack (T-shirts, stickers, swag)"
+      merchandise_included: true
+      merchandise_shipping: "Shipped directly to the Ambassador as the Single Point of Contact (SPOC)"
+      certificates: "Official digital participation certificates for all active code submitters"
+
+  activation_sop:
+    sla: "Submit winner spreadsheet within 1–2 business days post-event"
+    recipient: "Sanskruti (Program Manager)"
+    critical_requirement: "Submitted email addresses MUST match the exact email registered on the winner's HackerRank user profile. Mismatched roll-number emails will cause activation failure."
+    required_fields:
+      - "Full Name"
+      - "College / Institution Name"
+      - "Contest Rank & Final Score"
+      - "Exact HackerRank Account Email"
+
+# ------------------------------------------------------------------------------
+# 3. CERTIFICATE PIPELINE & CANVA BULK CREATE
+# ------------------------------------------------------------------------------
+certificates:
+  eligibility: "Every attendee who submitted code or answers on the contest platform."
+  template_lead: "Nitish (Design Lead)"
+  canva_bulk_schema:
+    headers:
+      - "Full Name"
+      - "Email Address"
+      - "College Name"
+      - "Event Name"
+      - "Date"
+      - "Rank"
+      - "Score"
+    steps:
+      - "Export participant submission roster from HRW/HRC"
+      - "Clean and format into the standard Canva 7-column CSV schema"
+      - "In Canva, open approved template -> Apps -> Bulk Create -> Upload CSV"
+      - "Connect Data fields to text placeholders and generate high-res PDFs"
+
+# ------------------------------------------------------------------------------
+# 4. ESCALATION DIRECTORY & LEAD ROUTING
+# ------------------------------------------------------------------------------
+escalations:
+  sanskruti:
+    name: "Sanskruti"
+    role: "Program Manager"
+    discord_id_key: "POC_DISCORD_SANSKRUTI"
+    responsibilities:
+      - "Winner rewards and Infinity Plan activations"
+      - "Welcome onboarding kits and ambassador tracking"
+      - "Physical merchandise shipments and tracking numbers"
+      - "HackerRank engineer guest speaker and judge requests (14-day notice)"
+      - "Official institutional college permission letters"
+      - "General ambassador escalations"
+
+  sreesanth:
+    name: "Sreesanth"
+    role: "Technical Lead"
+    discord_id_key: "POC_DISCORD_SREESANTH"
+    responsibilities:
+      - "HackerRank for Work (HRW) recruiter account invitations and access issues"
+      - "Live contest 404 / 500 outages and platform latency"
+      - "Compiler errors, sandbox timeouts, and scoring anomalies"
+      - "Candidate account lockout troubleshooting"
+      - "SkillUp integration bugs"
+
+  nitish:
+    name: "Nitish"
+    role: "Design Lead"
+    discord_id_key: "POC_DISCORD_NITISH"
+    responsibilities:
+      - "Official high-res vector logo packages (PNG, SVG)"
+      - "Approved certificate Canva vector frame templates"
+      - "Event marketing poster templates and creative reviews"
+      - "Brand guideline compliance verification"
+
+# ------------------------------------------------------------------------------
+# 5. AMBASSADOR COMPLIANCE & DEADLINES
+# ------------------------------------------------------------------------------
+compliance:
+  cadence: "1 official HackerRank-platform event per calendar month"
+  report_deadline_hours: 48
+  speaker_request_lead_time_days: 14
+  letter_request_lead_time_days: 7
