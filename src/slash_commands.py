@@ -38,6 +38,34 @@ from src.escalation import CATEGORY_MAP, POC_DISPLAY, _classify_urgency, _get_po
 
 log = logging.getLogger("hrcc.commands")
 
+QUIZ_QUESTIONS = [
+    {
+        "q": "Which tab in HRW must ambassadors NEVER access?",
+        "options": ["Analytics", "Chakra", "Dashboard", "Settings"],
+        "answer": 1,
+    },
+    {
+        "q": "Can you host a campus event on SkillUp?",
+        "options": ["Yes, any event", "Only workshops", "No, never", "Only if HRW is down"],
+        "answer": 2,
+    },
+    {
+        "q": "What's the minimum for merchandise eligibility?",
+        "options": ["100 participants", "200 participants", "300 participants", "500 participants"],
+        "answer": 2,
+    },
+    {
+        "q": "What counts as an 'active participant'?",
+        "options": ["Registered for event", "Opened the link", "Submitted code/answers", "Attended online"],
+        "answer": 2,
+    },
+    {
+        "q": "Contest end time is reached. Can you reopen it?",
+        "options": ["Yes, from dashboard", "Yes, contact support", "No, never", "Only within 1 hour"],
+        "answer": 2,
+    },
+]
+
 
 # ── /rewards ──────────────────────────────────────────────────────────────
 
@@ -1431,34 +1459,6 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         await interaction.response.send_modal(SubmitReportModal())
 
     # ── /onboard_quiz ─────────────────────────────────────────────────────
-
-    QUIZ_QUESTIONS = [
-        {
-            "q": "Which tab in HRW must ambassadors NEVER access?",
-            "options": ["Analytics", "Chakra", "Dashboard", "Settings"],
-            "answer": 1,
-        },
-        {
-            "q": "Can you host a campus event on SkillUp?",
-            "options": ["Yes, any event", "Only workshops", "No, never", "Only if HRW is down"],
-            "answer": 2,
-        },
-        {
-            "q": "What's the minimum for merchandise eligibility?",
-            "options": ["100 participants", "200 participants", "300 participants", "500 participants"],
-            "answer": 2,
-        },
-        {
-            "q": "What counts as an 'active participant'?",
-            "options": ["Registered for event", "Opened the link", "Submitted code/answers", "Attended online"],
-            "answer": 2,
-        },
-        {
-            "q": "Contest end time is reached. Can you reopen it?",
-            "options": ["Yes, from dashboard", "Yes, contact support", "No, never", "Only within 1 hour"],
-            "answer": 2,
-        },
-    ]
 
     class QuizView(ui.View):
         def __init__(self, user_id: int) -> None:
