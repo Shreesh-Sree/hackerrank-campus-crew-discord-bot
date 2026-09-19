@@ -254,6 +254,22 @@ _SQLITE_SCHEMA = """
 
     CREATE INDEX IF NOT EXISTS idx_showcase_created
         ON event_showcase(created_at);
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_id        INTEGER NOT NULL,
+        actor_name      TEXT    NOT NULL,
+        action          TEXT    NOT NULL,
+        target_id       INTEGER NOT NULL DEFAULT 0,
+        target_name     TEXT    NOT NULL DEFAULT '',
+        details         TEXT    NOT NULL DEFAULT '',
+        created_at      TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_created
+        ON audit_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_actor
+        ON audit_log(actor_id);
 """
 
 _PG_SCHEMA = """
@@ -397,6 +413,22 @@ _PG_SCHEMA = """
 
     CREATE INDEX IF NOT EXISTS idx_showcase_created
         ON event_showcase(created_at);
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+        id              SERIAL PRIMARY KEY,
+        actor_id        BIGINT  NOT NULL,
+        actor_name      TEXT    NOT NULL,
+        action          TEXT    NOT NULL,
+        target_id       BIGINT  NOT NULL DEFAULT 0,
+        target_name     TEXT    NOT NULL DEFAULT '',
+        details         TEXT    NOT NULL DEFAULT '',
+        created_at      TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_created
+        ON audit_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_actor
+        ON audit_log(actor_id);
 """
 
 
@@ -1124,6 +1156,35 @@ def get_upcoming_events_calendar() -> list[dict[str, Any]]:
            FROM ambassador_events
            WHERE event_date != '' AND event_date >= date('now')
            ORDER BY event_date ASC LIMIT 15"""
+    )
+
+
+def log_audit(
+    *,
+    actor_id: int,
+    actor_name: str,
+    action: str,
+    target_id: int = 0,
+    target_name: str = "",
+    details: str = "",
+) -> None:
+    _execute(
+        """INSERT INTO audit_log (actor_id, actor_name, action, target_id, target_name, details, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (actor_id, actor_name, action, target_id, target_name, details, _now_iso()),
+    )
+
+
+def get_audit_log(limit: int = 50) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?", (limit,)
+    )
+
+
+def get_audit_log_for_user(user_id: int, limit: int = 20) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM audit_log WHERE actor_id=? OR target_id=? ORDER BY created_at DESC LIMIT ?",
+        (user_id, user_id, limit),
     )
 
 

@@ -15,7 +15,7 @@ from src.config import settings
 from src.context import memory
 from src.cert_generator import build_cert_preview_file
 from src.csv_validator import build_canva_file, build_event_report, build_summary_embed, parse_contest_csv
-from src.db import ACHIEVEMENT_DEFS, award_points, check_and_grant_achievements, close_db, init_db, record_event_submission
+from src.db import ACHIEVEMENT_DEFS, award_points, check_and_grant_achievements, close_db, init_db, log_audit, record_event_submission
 from src.escalation_views import PersistentTicketView
 from src.graph import PipelineState, get_pipeline
 from src.incident_cluster import incident_engine
@@ -288,6 +288,11 @@ async def _handle_csv_upload(
         except discord.Forbidden:
             summary_report = build_event_report(result, ambassador_name=str(message.author), include_emails=False)
             await message.channel.send(summary_report)
+
+        log_audit(
+            actor_id=message.author.id, actor_name=str(message.author),
+            action="CSV_UPLOAD", details=f"{event_name}: {result.active_participants} participants, {result.reward_tier}",
+        )
 
         record_event_submission(
             ambassador_id=message.author.id,

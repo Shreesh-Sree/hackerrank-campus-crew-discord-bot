@@ -96,6 +96,12 @@ async def dispatch_escalation(
         description=description or message.content,
     )
 
+    from src.db import log_audit
+    log_audit(
+        actor_id=message.author.id, actor_name=str(message.author),
+        action="ESCALATE", details=f"{ticket['ticket_code']} {urgency} -> {lead_key}",
+    )
+
     await message.reply(
         f"Ticket **{ticket['ticket_code']}** ({urgency}) dispatched to "
         f"**{POC_DISPLAY.get(lead_key, lead_key)}**. You will be notified upon review.",
