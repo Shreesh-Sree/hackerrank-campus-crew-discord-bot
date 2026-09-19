@@ -12,9 +12,13 @@ import re
 from src.config import settings
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
 from src.db import (
+    TIER_BADGES,
     create_ticket,
     get_ambassador_events,
+    get_ambassador_points,
     get_ambassador_profile,
+    get_college_leaderboard,
+    get_national_leaderboard,
     get_ticket,
     get_ticket_stats,
     update_ambassador_stage,
@@ -409,6 +413,13 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         events = get_ambassador_events(user.id)
 
         embed = discord.Embed(title=f"Ambassador — {user.display_name}", color=discord.Color.teal())
+
+        pts = get_ambassador_points(user.id)
+        if pts:
+            badge = TIER_BADGES.get(pts["tier_name"], "🎖️")
+            embed.add_field(name="Tier", value=f"{badge} {pts['tier_name']}", inline=True)
+            embed.add_field(name="Points", value=str(pts["total_points"]), inline=True)
+            embed.add_field(name="Contests", value=str(pts["contests_hosted"]), inline=True)
 
         if profile:
             embed.add_field(name="College", value=profile["college_name"] or "Not set", inline=True)
@@ -892,6 +903,13 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         college = (profile["college_name"] if profile and profile["college_name"] else "Not set")
         embed.add_field(name="Institution", value=college, inline=True)
 
+        pts = get_ambassador_points(uid)
+        if pts:
+            badge = TIER_BADGES.get(pts["tier_name"], "🎖️")
+            embed.add_field(name="Tier", value=f"{badge} {pts['tier_name']} ({pts['total_points']} pts)", inline=True)
+        else:
+            embed.add_field(name="Tier", value="🎖️ Apprentice Ambassador (0 pts)", inline=True)
+
         stage = profile["current_stage"] if profile else "PLANNING"
         stage_emoji = {
             "PLANNING": "📋", "SETUP": "🔧", "OUTREACH": "📢", "LIVE": "🔴", "REWARDS": "🏆"
@@ -936,3 +954,46 @@ def register_commands(tree: app_commands.CommandTree) -> None:
 
         embed.set_footer(text="Use /set_stage to update your lifecycle. Run at least 1 event/month.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ── /leaderboard ──────────────────────────────────────────────────────
+
+    @tree.command(name="leaderboard", description="National or college ambassador leaderboard")
+    @app_commands.describe(scope="Leaderboard scope")
+    @app_commands.choices(scope=[
+        app_commands.Choice(name="National (Top 10)", value="national"),
+        app_commands.Choice(name="My College", value="my_college"),
+    ])
+    async def leaderboard_cmd(interaction: discord.Interaction, scope: app_commands.Choice[str]) -> None:
+        if scope.value == "my_college":
+            profile = get_ambassador_profile(interaction.user.id)
+            college = profile["college_name"] if profile and profile["college_name"] else ""
+            if not college:
+                await interaction.response.send_message(
+                    "Set your college first with `/set_stage` or ask a lead to update your profile.",
+                    ephemeral=True,
+                )
+                return
+            rows = get_college_leaderboard(college, limit=10)
+            title = f"Leaderboard — {college}"
+        else:
+            rows = get_national_leaderboard(limit=10)
+            title = "National Ambassador Leaderboard"
+
+        if not rows:
+            await interaction.response.send_message("No ambassadors on the leaderboard yet.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title=title, color=discord.Color.gold())
+
+        lines: list[str] = []
+        for i, r in enumerate(rows, start=1):
+            badge = TIER_BADGES.get(r["tier_name"], "🎖️")
+            medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"`#{i}`")
+            lines.append(
+                f"{medal} **{r['ambassador_name']}** — {r['total_points']} pts "
+                f"{badge} {r['tier_name']} | {r['contests_hosted']} contests"
+            )
+
+        embed.description = "\n".join(lines)
+        embed.set_footer(text="Points: +100 per contest, +150 for 300+ participants, +50 on-time report, +75 P0 triage")
+        await interaction.response.send_message(embed=embed)

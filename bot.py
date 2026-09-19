@@ -14,7 +14,7 @@ from src.config import settings
 from src.context import memory
 from src.cert_generator import build_cert_preview_file
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
-from src.db import close_db, init_db, record_event_submission
+from src.db import award_points, close_db, init_db, record_event_submission
 from src.escalation_views import PersistentTicketView
 from src.graph import PipelineState, get_pipeline
 from src.incident_cluster import incident_engine
@@ -257,7 +257,6 @@ async def _handle_csv_upload(
             )
             return
 
-        # Record the event submission in the database
         record_event_submission(
             ambassador_id=message.author.id,
             ambassador_name=str(message.author),
@@ -267,6 +266,22 @@ async def _handle_csv_upload(
             merch_eligible=result.merch_eligible,
             csv_sha256=result.csv_sha256,
         )
+
+        award_points(
+            ambassador_id=message.author.id,
+            ambassador_name=str(message.author),
+            points_delta=100,
+            action_type="CONTEST_HOSTED",
+            description=f"Hosted {event_name} ({result.active_participants} participants)",
+        )
+        if result.merch_eligible:
+            award_points(
+                ambassador_id=message.author.id,
+                ambassador_name=str(message.author),
+                points_delta=150,
+                action_type="PARTICIPANTS_300_PLUS",
+                description=f"{event_name}: {result.active_participants} participants (merch tier)",
+            )
 
 
 # ── Error handlers ────────────────────────────────────────────────────────

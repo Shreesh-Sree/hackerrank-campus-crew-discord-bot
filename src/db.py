@@ -174,6 +174,29 @@ _SQLITE_SCHEMA = """
         ON ambassador_events(ambassador_id);
     CREATE INDEX IF NOT EXISTS idx_conv_user
         ON conversation_turns(user_id, timestamp);
+
+    CREATE TABLE IF NOT EXISTS ambassador_points (
+        ambassador_id   INTEGER PRIMARY KEY,
+        ambassador_name TEXT    NOT NULL,
+        college_name    TEXT    NOT NULL DEFAULT '',
+        total_points    INTEGER NOT NULL DEFAULT 0,
+        tier_name       TEXT    NOT NULL DEFAULT 'Apprentice Ambassador',
+        contests_hosted INTEGER NOT NULL DEFAULT 0,
+        merch_events_count INTEGER NOT NULL DEFAULT 0,
+        updated_at      TEXT    NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS points_ledger (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        ambassador_id   INTEGER NOT NULL,
+        points_delta    INTEGER NOT NULL,
+        action_type     TEXT    NOT NULL,
+        description     TEXT    NOT NULL DEFAULT '',
+        created_at      TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_points_ambassador
+        ON points_ledger(ambassador_id);
 """
 
 _PG_SCHEMA = """
@@ -237,6 +260,29 @@ _PG_SCHEMA = """
         ON ambassador_events(ambassador_id);
     CREATE INDEX IF NOT EXISTS idx_conv_user
         ON conversation_turns(user_id, timestamp);
+
+    CREATE TABLE IF NOT EXISTS ambassador_points (
+        ambassador_id   BIGINT PRIMARY KEY,
+        ambassador_name TEXT    NOT NULL,
+        college_name    TEXT    NOT NULL DEFAULT '',
+        total_points    INTEGER NOT NULL DEFAULT 0,
+        tier_name       TEXT    NOT NULL DEFAULT 'Apprentice Ambassador',
+        contests_hosted INTEGER NOT NULL DEFAULT 0,
+        merch_events_count INTEGER NOT NULL DEFAULT 0,
+        updated_at      TEXT    NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS points_ledger (
+        id              SERIAL PRIMARY KEY,
+        ambassador_id   BIGINT  NOT NULL,
+        points_delta    INTEGER NOT NULL,
+        action_type     TEXT    NOT NULL,
+        description     TEXT    NOT NULL DEFAULT '',
+        created_at      TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_points_ambassador
+        ON points_ledger(ambassador_id);
 """
 
 
@@ -525,6 +571,88 @@ def get_monthly_stats() -> dict[str, Any]:
         "tickets": ticket_stats,
         "avg_resolution_hours": round((resolved_row["avg_hours"] or 0) if resolved_row else 0, 1),
     }
+
+
+TIER_THRESHOLDS = [
+    (1000, "Hall of Fame"),
+    (500, "National Fellow"),
+    (200, "Campus Lead"),
+    (0, "Apprentice Ambassador"),
+]
+
+TIER_BADGES = {
+    "Apprentice Ambassador": "🎖️",
+    "Campus Lead": "🥉",
+    "National Fellow": "🥈",
+    "Hall of Fame": "🥇",
+}
+
+
+def _compute_tier(points: int) -> str:
+    for threshold, name in TIER_THRESHOLDS:
+        if points >= threshold:
+            return name
+    return "Apprentice Ambassador"
+
+
+def award_points(
+    *,
+    ambassador_id: int,
+    ambassador_name: str,
+    college_name: str = "",
+    points_delta: int,
+    action_type: str,
+    description: str = "",
+) -> dict[str, Any]:
+    now = _now_iso()
+
+    _execute(
+        "INSERT INTO points_ledger (ambassador_id, points_delta, action_type, description, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ambassador_id, points_delta, action_type, description, now),
+    )
+
+    existing = _fetchone("SELECT * FROM ambassador_points WHERE ambassador_id=?", (ambassador_id,))
+    if existing:
+        new_total = existing["total_points"] + points_delta
+        new_contests = existing["contests_hosted"] + (1 if action_type == "CONTEST_HOSTED" else 0)
+        new_merch = existing["merch_events_count"] + (1 if action_type == "PARTICIPANTS_300_PLUS" else 0)
+        tier = _compute_tier(new_total)
+        _execute(
+            "UPDATE ambassador_points SET total_points=?, tier_name=?, contests_hosted=?, "
+            "merch_events_count=?, updated_at=? WHERE ambassador_id=?",
+            (new_total, tier, new_contests, new_merch, now, ambassador_id),
+        )
+    else:
+        tier = _compute_tier(points_delta)
+        _execute(
+            "INSERT INTO ambassador_points (ambassador_id, ambassador_name, college_name, "
+            "total_points, tier_name, contests_hosted, merch_events_count, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (ambassador_id, ambassador_name, college_name, points_delta, tier,
+             1 if action_type == "CONTEST_HOSTED" else 0,
+             1 if action_type == "PARTICIPANTS_300_PLUS" else 0, now),
+        )
+
+    return get_ambassador_points(ambassador_id) or {}
+
+
+def get_ambassador_points(ambassador_id: int) -> dict[str, Any] | None:
+    return _fetchone("SELECT * FROM ambassador_points WHERE ambassador_id=?", (ambassador_id,))
+
+
+def get_national_leaderboard(limit: int = 10) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM ambassador_points ORDER BY total_points DESC LIMIT ?",
+        (limit,),
+    )
+
+
+def get_college_leaderboard(college_name: str, limit: int = 10) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM ambassador_points WHERE college_name=? ORDER BY total_points DESC LIMIT ?",
+        (college_name, limit),
+    )
 
 
 def close_db() -> None:
