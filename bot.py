@@ -12,6 +12,7 @@ from discord.ext import commands, tasks
 
 from src.config import settings
 from src.context import memory
+from src.cert_generator import build_cert_preview_file
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
 from src.db import close_db, init_db, record_event_submission
 from src.escalation_views import PersistentTicketView
@@ -208,8 +209,23 @@ async def _handle_csv_upload(
         embed = build_summary_embed(result)
         canva_file = build_canva_file(result)
 
+        files = [canva_file]
+        if result.winners:
+            w = result.winners[0]
+            try:
+                cert_preview = build_cert_preview_file(
+                    name=w["name"],
+                    college_name=result.college_name,
+                    event_name=result.event_name,
+                    rank=w.get("rank", 1),
+                    date=result.canva_csv.split("\n")[1].split(",")[4] if result.canva_csv else "",
+                )
+                files.append(cert_preview)
+            except Exception:
+                log.warning("Certificate preview generation failed, skipping")
+
         try:
-            await message.reply(embed=embed, file=canva_file, mention_author=False)
+            await message.reply(embed=embed, files=files, mention_author=False)
         except discord.HTTPException:
             log.exception("Failed to send CSV validation result")
             await message.reply(
