@@ -34,9 +34,9 @@ def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import src.db as db_mod
 
     test_db = tmp_path / "test.db"
-    monkeypatch.setattr(db_mod, "_DB_PATH", test_db)
-    if hasattr(db_mod, "_local"):
-        db_mod._local.conn = None  # type: ignore[attr-defined]
+    monkeypatch.setattr(db_mod, "_SQLITE_PATH", test_db)
+    monkeypatch.setattr(db_mod, "_using_postgres", False)
+    db_mod._local.sqlite_conn = None  # type: ignore[attr-defined]
     init_db()
     yield
     close_db()

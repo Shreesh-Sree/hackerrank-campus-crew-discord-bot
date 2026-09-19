@@ -1,76 +1,23 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands, tasks
 
 from src.config import settings
-from src.db import get_ticket_stats
+from src.db import get_events_in_window, get_monthly_stats
 
 log = logging.getLogger("hrcc.scheduler")
 
 
-def _upcoming_events_query(hours_before: int, hours_after: int) -> str:
-    return (
-        "SELECT * FROM ambassador_events "
-        "WHERE event_date != '' "
-        "AND datetime(event_date) BETWEEN datetime('now', ? || ' hours') "
-        "AND datetime('now', ? || ' hours') "
-        "ORDER BY event_date"
-    )
-
-
 def _get_events_in_window(hours_from: int, hours_to: int) -> list[dict]:
-    from src.db import _get_conn
-    conn = _get_conn()
-    rows = conn.execute(
-        """SELECT * FROM ambassador_events
-           WHERE event_date != ''
-           AND datetime(event_date) BETWEEN datetime('now', ? || ' hours')
-           AND datetime('now', ? || ' hours')
-           ORDER BY event_date""",
-        (str(hours_from), str(hours_to)),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return get_events_in_window(hours_from, hours_to)
 
 
 def _get_all_month_stats() -> dict:
-    from src.db import _get_conn
-    conn = _get_conn()
-
-    now = datetime.now(timezone.utc)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-
-    event_row = conn.execute(
-        "SELECT COUNT(*) as cnt, COALESCE(SUM(participant_count),0) as total_p "
-        "FROM ambassador_events WHERE created_at >= ?",
-        (month_start,),
-    ).fetchone()
-
-    merch_row = conn.execute(
-        "SELECT COUNT(*) as cnt FROM ambassador_events WHERE created_at >= ? AND merch_eligible=1",
-        (month_start,),
-    ).fetchone()
-
-    ticket_stats = get_ticket_stats()
-
-    resolved_times = conn.execute(
-        """SELECT AVG(
-            (julianday(updated_at) - julianday(created_at)) * 24
-           ) as avg_hours
-           FROM escalation_tickets WHERE status='RESOLVED' AND created_at >= ?""",
-        (month_start,),
-    ).fetchone()
-
-    return {
-        "total_events": event_row["cnt"] if event_row else 0,
-        "total_participants": event_row["total_p"] if event_row else 0,
-        "merch_events": merch_row["cnt"] if merch_row else 0,
-        "tickets": ticket_stats,
-        "avg_resolution_hours": round(resolved_times["avg_hours"] or 0, 1) if resolved_times else 0,
-    }
+    return get_monthly_stats()
 
 
 class SchedulerCog(commands.Cog):
@@ -105,7 +52,6 @@ class SchedulerCog(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def _check_reminders(self) -> None:
-        # T-72h reminders
         events_72h = _get_events_in_window(-73, -72)
         for ev in events_72h:
             await self._dm_ambassador(
@@ -118,7 +64,6 @@ class SchedulerCog(commands.Cog):
                 f"- [ ] Start your promotion push if you haven't already",
             )
 
-        # T-24h reminders
         events_24h = _get_events_in_window(-25, -24)
         for ev in events_24h:
             await self._dm_ambassador(
@@ -132,7 +77,6 @@ class SchedulerCog(commands.Cog):
                 f"- [ ] Post final reminder to all promotion channels",
             )
 
-        # T+24h reminders
         events_post24 = _get_events_in_window(24, 25)
         for ev in events_post24:
             await self._dm_ambassador(

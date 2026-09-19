@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # Discord message limits
     max_message_length: int = Field(default=2000, ge=500)
 
+    # Database
+    database_url: str = ""
+
     # Production operations
     log_level: str = "INFO"
     health_check_interval: int = 60
