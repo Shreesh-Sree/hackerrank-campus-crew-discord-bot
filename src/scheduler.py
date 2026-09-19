@@ -164,7 +164,15 @@ class SchedulerCog(commands.Cog):
             if poc_id:
                 await self._dm_user(int(poc_id), embed=embed)
 
+    def _localize_note(self, ambassador_id: int) -> str:
+        from src.db import get_ambassador_profile
+        profile = get_ambassador_profile(ambassador_id)
+        if profile and profile.get("timezone_str") and profile["timezone_str"] != "UTC":
+            return f"\n*Your timezone: {profile['timezone_str']}*"
+        return ""
+
     async def _dm_ambassador(self, ambassador_id: int, content: str) -> None:
+        content += self._localize_note(ambassador_id)
         try:
             user = await self.bot.fetch_user(ambassador_id)
             dm = await user.create_dm()

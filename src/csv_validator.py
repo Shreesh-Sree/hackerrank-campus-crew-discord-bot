@@ -210,6 +210,29 @@ def build_summary_embed(result: ContestResult) -> discord.Embed:
         )
         embed.add_field(name="Top Winners", value=top, inline=False)
 
+    if result.active_participants > 0:
+        scores = [w["score"] for w in result.winners if w.get("score")]
+        if scores:
+            avg_score = sum(scores) / len(scores)
+            max_score = max(scores)
+            min_score = min(scores) if len(scores) > 1 else max_score
+            completion_pct = round(result.active_participants / max(result.total_rows, 1) * 100)
+
+            easy = sum(1 for s in scores if s >= max_score * 0.7)
+            medium = sum(1 for s in scores if max_score * 0.3 <= s < max_score * 0.7)
+            hard = sum(1 for s in scores if s < max_score * 0.3)
+
+            embed.add_field(
+                name="Analytics",
+                value=(
+                    f"**Completion Rate:** {completion_pct}%\n"
+                    f"**Avg Score (Top 10):** {avg_score:.0f}\n"
+                    f"**Score Range:** {min_score:.0f} – {max_score:.0f}\n"
+                    f"**Difficulty Curve:** Easy {easy} / Med {medium} / Hard {hard}"
+                ),
+                inline=True,
+            )
+
     if result.warnings:
         embed.add_field(
             name="Warnings",

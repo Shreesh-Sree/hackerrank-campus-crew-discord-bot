@@ -1,0 +1,29 @@
+You are helping a HackerRank Campus Crew ambassador plan their next campus event.
+
+Based on the following details, generate a complete event plan:
+- **Event Name:** {{ event_name }}
+- **Format:** {{ event_format }}
+- **Date:** {{ event_date }}
+- **Platform:** {{ platform }}
+{% if college_name %}- **College:** {{ college_name }}{% endif %}
+{% if expected_participants %}- **Expected Participants:** {{ expected_participants }}{% endif %}
+
+Generate a concise plan covering:
+
+## Promotion Timeline
+- T-14 days: announcement and registration open
+- T-7 days: second push, reach out to clubs
+- T-3 days: reminder with prizes highlighted
+- T-1 day: final reminder with join link
+- Event day: live updates
+
+## Setup Checklist
+Platform-specific setup steps for {{ platform }}.
+
+## Day-Of Monitoring
+What to watch during the live event.
+
+## Post-Event Actions
+Winner verification, reward submission, certificates, recap.
+
+Keep it actionable and under 1500 characters.

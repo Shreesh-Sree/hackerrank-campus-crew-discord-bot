@@ -721,6 +721,51 @@ def check_and_grant_achievements(ambassador_id: int, ambassador_name: str = "") 
         if grant_achievement(ambassador_id, "thousand_participants"):
             granted.append("thousand_participants")
 
+    # 5-month streak: check if events exist in 5 consecutive months
+    if events and "five_streak" not in existing:
+        from datetime import datetime
+        months_with_events: set[str] = set()
+        for e in events:
+            created = e.get("created_at", "")
+            if created:
+                months_with_events.add(created[:7])  # "YYYY-MM"
+        if len(months_with_events) >= 5:
+            sorted_months = sorted(months_with_events, reverse=True)
+            streak = 1
+            for i in range(len(sorted_months) - 1):
+                y1, m1 = int(sorted_months[i][:4]), int(sorted_months[i][5:7])
+                y2, m2 = int(sorted_months[i + 1][:4]), int(sorted_months[i + 1][5:7])
+                if (y1 * 12 + m1) - (y2 * 12 + m2) == 1:
+                    streak += 1
+                    if streak >= 5:
+                        break
+                else:
+                    streak = 1
+            if streak >= 5:
+                if grant_achievement(ambassador_id, "five_streak"):
+                    granted.append("five_streak")
+
+    # International collaborator: completed a cross-country collab
+    if "collaborator" not in existing:
+        completed_collabs = _fetchall(
+            "SELECT 1 FROM collab_requests WHERE (requester_id=? OR target_id=?) AND status='COMPLETED' LIMIT 1",
+            (ambassador_id, ambassador_id),
+        )
+        if completed_collabs:
+            if grant_achievement(ambassador_id, "collaborator"):
+                granted.append("collaborator")
+
+    # P0 first responder: acknowledged a P0 ticket
+    if "first_responder" not in existing:
+        p0_acks = _fetchall(
+            "SELECT 1 FROM escalation_tickets WHERE urgency='P0' AND status IN ('ACKNOWLEDGED','RESOLVED') "
+            "AND poc_id=? LIMIT 1",
+            (str(ambassador_id),),
+        )
+        if p0_acks:
+            if grant_achievement(ambassador_id, "first_responder"):
+                granted.append("first_responder")
+
     return granted
 
 
