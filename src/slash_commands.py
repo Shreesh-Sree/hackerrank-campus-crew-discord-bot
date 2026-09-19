@@ -7,8 +7,16 @@ from typing import Any
 import discord
 from discord import app_commands, ui
 
+from src.config import settings
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
-from src.db import get_ticket
+from src.db import (
+    get_ambassador_events,
+    get_ambassador_profile,
+    get_ticket,
+    get_ticket_stats,
+    update_ambassador_stage,
+    upsert_ambassador_profile,
+)
 
 log = logging.getLogger("hrcc.commands")
 
@@ -340,3 +348,105 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         embed = build_summary_embed(result)
         canva_file = build_canva_file(result)
         await interaction.followup.send(embed=embed, file=canva_file)
+
+    # ── /admin_stats (Lead-restricted) ────────────────────────────────────
+
+    LEAD_IDS = {
+        int(x) for x in [
+            settings.poc_discord_sanskruti,
+            settings.poc_discord_sreesanth,
+            settings.poc_discord_nitish,
+        ] if x
+    }
+
+    @tree.command(name="admin_stats", description="Monthly operations dashboard (leads only)")
+    async def admin_stats_cmd(interaction: discord.Interaction) -> None:
+        if LEAD_IDS and interaction.user.id not in LEAD_IDS:
+            await interaction.response.send_message(
+                "This command is restricted to program leads.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+        from src.scheduler import _get_all_month_stats
+        stats = _get_all_month_stats()
+
+        from datetime import datetime, timezone
+        month_name = datetime.now(timezone.utc).strftime("%B %Y")
+
+        embed = discord.Embed(title=f"Admin Dashboard — {month_name}", color=discord.Color.dark_gold())
+        embed.add_field(
+            name="Events",
+            value=(
+                f"**Total:** {stats['total_events']}\n"
+                f"**Participants:** {stats['total_participants']}\n"
+                f"**Merch Tier (300+):** {stats['merch_events']}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Tickets",
+            value=(
+                f"**Pending:** {stats['tickets']['PENDING']}\n"
+                f"**Acknowledged:** {stats['tickets']['ACKNOWLEDGED']}\n"
+                f"**Resolved:** {stats['tickets']['RESOLVED']}\n"
+                f"**MTTR:** {stats['avg_resolution_hours']}h"
+            ),
+            inline=True,
+        )
+        await interaction.followup.send(embed=embed)
+
+    # ── /ambassador [user] ────────────────────────────────────────────────
+
+    @tree.command(name="ambassador", description="View an ambassador's profile and event history")
+    @app_commands.describe(user="The ambassador to look up")
+    async def ambassador_cmd(interaction: discord.Interaction, user: discord.User) -> None:
+        profile = get_ambassador_profile(user.id)
+        events = get_ambassador_events(user.id)
+
+        embed = discord.Embed(title=f"Ambassador — {user.display_name}", color=discord.Color.teal())
+
+        if profile:
+            embed.add_field(name="College", value=profile["college_name"] or "Not set", inline=True)
+            embed.add_field(name="Stage", value=profile["current_stage"], inline=True)
+            if profile["notes"]:
+                embed.add_field(name="Notes", value=profile["notes"][:256], inline=False)
+        else:
+            embed.add_field(name="Profile", value="No profile registered yet.", inline=False)
+
+        if events:
+            total_p = sum(e["participant_count"] for e in events)
+            event_lines = "\n".join(
+                f"- **{e['event_name']}** ({e['event_date'] or '—'}) — {e['participant_count']} participants"
+                for e in events[:5]
+            )
+            embed.add_field(name=f"Events ({len(events)} total, {total_p} participants)", value=event_lines, inline=False)
+        else:
+            embed.add_field(name="Events", value="No events recorded.", inline=False)
+
+        await interaction.response.send_message(embed=embed)
+
+    # ── /set_stage ────────────────────────────────────────────────────────
+
+    @tree.command(name="set_stage", description="Update your active event lifecycle stage")
+    @app_commands.describe(stage="Your current event stage")
+    @app_commands.choices(stage=[
+        app_commands.Choice(name="Planning", value="PLANNING"),
+        app_commands.Choice(name="Setup", value="SETUP"),
+        app_commands.Choice(name="Outreach", value="OUTREACH"),
+        app_commands.Choice(name="Live", value="LIVE"),
+        app_commands.Choice(name="Rewards", value="REWARDS"),
+    ])
+    async def set_stage_cmd(interaction: discord.Interaction, stage: app_commands.Choice[str]) -> None:
+        upsert_ambassador_profile(
+            ambassador_id=interaction.user.id,
+            ambassador_name=interaction.user.display_name,
+        )
+        updated = update_ambassador_stage(interaction.user.id, stage.value)
+        if updated:
+            await interaction.response.send_message(
+                f"Your event stage has been updated to **{stage.name}**.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message("Could not update your stage.", ephemeral=True)
