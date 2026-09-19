@@ -12,16 +12,25 @@ import re
 from src.config import settings
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
 from src.db import (
+    REGIONS,
     TIER_BADGES,
+    create_collab_request,
     create_ticket,
+    find_ambassadors_by_country,
+    find_ambassadors_by_region,
     get_ambassador_events,
     get_ambassador_points,
     get_ambassador_profile,
     get_college_leaderboard,
-    get_national_leaderboard,
+    get_country_leaderboard,
+    get_global_leaderboard,
+    get_open_collab_requests,
+    get_region_leaderboard,
     get_ticket,
     get_ticket_stats,
+    resolve_region,
     update_ambassador_stage,
+    update_collab_status,
     upsert_ambassador_profile,
 )
 from src.escalation import CATEGORY_MAP, POC_DISPLAY, _classify_urgency, _get_poc_id
@@ -957,27 +966,41 @@ def register_commands(tree: app_commands.CommandTree) -> None:
 
     # ── /leaderboard ──────────────────────────────────────────────────────
 
-    @tree.command(name="leaderboard", description="National or college ambassador leaderboard")
+    @tree.command(name="leaderboard", description="Global, region, country, or college leaderboard")
     @app_commands.describe(scope="Leaderboard scope")
     @app_commands.choices(scope=[
-        app_commands.Choice(name="National (Top 10)", value="national"),
+        app_commands.Choice(name="Global (Top 10)", value="global"),
+        app_commands.Choice(name="My Region", value="my_region"),
+        app_commands.Choice(name="My Country", value="my_country"),
         app_commands.Choice(name="My College", value="my_college"),
     ])
     async def leaderboard_cmd(interaction: discord.Interaction, scope: app_commands.Choice[str]) -> None:
+        profile = get_ambassador_profile(interaction.user.id)
+
         if scope.value == "my_college":
-            profile = get_ambassador_profile(interaction.user.id)
-            college = profile["college_name"] if profile and profile["college_name"] else ""
+            college = profile["college_name"] if profile and profile.get("college_name") else ""
             if not college:
-                await interaction.response.send_message(
-                    "Set your college first with `/set_stage` or ask a lead to update your profile.",
-                    ephemeral=True,
-                )
+                await interaction.response.send_message("Set your profile first with `/set_profile`.", ephemeral=True)
                 return
             rows = get_college_leaderboard(college, limit=10)
-            title = f"Leaderboard — {college}"
+            title = f"College Leaderboard — {college}"
+        elif scope.value == "my_country":
+            country = profile["country"] if profile and profile.get("country") else ""
+            if not country:
+                await interaction.response.send_message("Set your country first with `/set_profile`.", ephemeral=True)
+                return
+            rows = get_country_leaderboard(country, limit=10)
+            title = f"Country Leaderboard — {country}"
+        elif scope.value == "my_region":
+            region = profile["region"] if profile and profile.get("region") else ""
+            if not region:
+                await interaction.response.send_message("Set your country first with `/set_profile`.", ephemeral=True)
+                return
+            rows = get_region_leaderboard(region, limit=10)
+            title = f"Region Leaderboard — {region}"
         else:
-            rows = get_national_leaderboard(limit=10)
-            title = "National Ambassador Leaderboard"
+            rows = get_global_leaderboard(limit=10)
+            title = "Global Ambassador Leaderboard"
 
         if not rows:
             await interaction.response.send_message("No ambassadors on the leaderboard yet.", ephemeral=True)
@@ -989,13 +1012,157 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         for i, r in enumerate(rows, start=1):
             badge = TIER_BADGES.get(r["tier_name"], "🎖️")
             medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"`#{i}`")
+            country_flag = r.get("country", "")
+            loc = f" ({country_flag})" if country_flag else ""
             lines.append(
-                f"{medal} **{r['ambassador_name']}** — {r['total_points']} pts "
-                f"{badge} {r['tier_name']} | {r['contests_hosted']} contests"
+                f"{medal} **{r['ambassador_name']}**{loc} — {r['total_points']} pts "
+                f"{badge} | {r['contests_hosted']} contests"
             )
 
         embed.description = "\n".join(lines)
-        embed.set_footer(text="Points: +100 per contest, +150 for 300+ participants, +50 on-time report, +75 P0 triage")
+        embed.set_footer(text="Points: +100/contest, +150/300+ participants | /set_profile to set your country")
+        await interaction.response.send_message(embed=embed)
+
+    # ── /set_profile ──────────────────────────────────────────────────────
+
+    class SetProfileModal(ui.Modal, title="Set Your Ambassador Profile"):
+        college_input = ui.TextInput(label="College / University", required=True, max_length=200)
+        country_input = ui.TextInput(label="Country (e.g. India, United States, Brazil)", required=True, max_length=100)
+        timezone_input = ui.TextInput(
+            label="Timezone (e.g. Asia/Kolkata, US/Eastern, UTC)",
+            required=False, max_length=50, placeholder="UTC",
+        )
+
+        async def on_submit(self, interaction: discord.Interaction) -> None:
+            country = self.country_input.value.strip()
+            region = resolve_region(country)
+            tz = self.timezone_input.value.strip() or "UTC"
+
+            upsert_ambassador_profile(
+                ambassador_id=interaction.user.id,
+                ambassador_name=interaction.user.display_name,
+                college_name=self.college_input.value.strip(),
+                country=country,
+                region=region,
+                timezone_str=tz,
+            )
+            await interaction.response.send_message(
+                f"Profile updated!\n"
+                f"**College:** {self.college_input.value.strip()}\n"
+                f"**Country:** {country}\n"
+                f"**Region:** {region}\n"
+                f"**Timezone:** {tz}",
+                ephemeral=True,
+            )
+
+    @tree.command(name="set_profile", description="Set your college, country, and timezone")
+    async def set_profile_cmd(interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(SetProfileModal())
+
+    # ── /find_ambassador ──────────────────────────────────────────────────
+
+    @tree.command(name="find_ambassador", description="Find ambassadors in a country or region")
+    @app_commands.describe(
+        scope="Search by country or region",
+        query="Country name (e.g. Brazil) or region (e.g. Asia-Pacific)",
+    )
+    @app_commands.choices(scope=[
+        app_commands.Choice(name="Country", value="country"),
+        app_commands.Choice(name="Region", value="region"),
+    ])
+    async def find_ambassador_cmd(
+        interaction: discord.Interaction,
+        scope: app_commands.Choice[str],
+        query: str,
+    ) -> None:
+        if scope.value == "region":
+            rows = find_ambassadors_by_region(query.strip(), limit=20)
+            title = f"Ambassadors in {query.strip()}"
+        else:
+            rows = find_ambassadors_by_country(query.strip(), limit=20)
+            title = f"Ambassadors in {query.strip()}"
+
+        if not rows:
+            await interaction.response.send_message(
+                f"No ambassadors found in {query.strip()}.", ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(title=title, color=discord.Color.teal())
+        lines = []
+        for r in rows[:15]:
+            college = r.get("college_name", "")
+            country = r.get("country", "")
+            stage = r.get("current_stage", "")
+            lines.append(f"- **{r['ambassador_name']}** — {college}, {country} ({stage})")
+        embed.description = "\n".join(lines)
+        if len(rows) > 15:
+            embed.set_footer(text=f"Showing 15 of {len(rows)} ambassadors")
+        await interaction.response.send_message(embed=embed)
+
+    # ── /collab_request ───────────────────────────────────────────────────
+
+    class CollabModal(ui.Modal, title="Cross-Campus Collaboration Request"):
+        event_name_input = ui.TextInput(label="Event Name", required=True, max_length=200)
+        event_format_input = ui.TextInput(
+            label="Format (contest / hackathon / workshop / joint)",
+            required=True, max_length=50,
+        )
+        proposed_date_input = ui.TextInput(label="Proposed Date (e.g. 15 November 2026)", required=True, max_length=50)
+        target_country_input = ui.TextInput(
+            label="Target Country or Region (or 'any')",
+            required=False, max_length=100, placeholder="any",
+        )
+        message_input = ui.TextInput(
+            label="Message to potential collaborators",
+            style=discord.TextStyle.paragraph,
+            required=False, max_length=500,
+        )
+
+        async def on_submit(self, interaction: discord.Interaction) -> None:
+            req = create_collab_request(
+                requester_id=interaction.user.id,
+                requester_name=interaction.user.display_name,
+                target_country=self.target_country_input.value.strip() or "any",
+                event_name=self.event_name_input.value.strip(),
+                event_format=self.event_format_input.value.strip(),
+                proposed_date=self.proposed_date_input.value.strip(),
+                message=self.message_input.value.strip(),
+            )
+            await interaction.response.send_message(
+                f"Collaboration request **#{req.get('id', '?')}** posted!\n"
+                f"**Event:** {self.event_name_input.value}\n"
+                f"**Target:** {self.target_country_input.value or 'Open to all'}\n"
+                f"Other ambassadors can find this via `/collab_browse`.",
+                ephemeral=True,
+            )
+
+    @tree.command(name="collab_request", description="Post a cross-campus collaboration request")
+    async def collab_request_cmd(interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(CollabModal())
+
+    # ── /collab_browse ────────────────────────────────────────────────────
+
+    @tree.command(name="collab_browse", description="Browse open collaboration requests from ambassadors worldwide")
+    async def collab_browse_cmd(interaction: discord.Interaction) -> None:
+        requests = get_open_collab_requests(limit=10)
+        if not requests:
+            await interaction.response.send_message("No open collaboration requests right now.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="Open Collaboration Requests", color=discord.Color.purple())
+        for req in requests:
+            target = req.get("target_country", "any")
+            embed.add_field(
+                name=f"#{req['id']} — {req['event_name']}",
+                value=(
+                    f"**By:** {req['requester_name']} | **Format:** {req.get('event_format', '—')}\n"
+                    f"**Date:** {req.get('proposed_date', '—')} | **Target:** {target}\n"
+                    f"{req.get('message', '')[:100]}"
+                ),
+                inline=False,
+            )
+        embed.set_footer(text="DM the requester to discuss, or use /collab_request to post your own!")
         await interaction.response.send_message(embed=embed)
 
     # ── /curate_contest ───────────────────────────────────────────────────

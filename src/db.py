@@ -152,6 +152,9 @@ _SQLITE_SCHEMA = """
         ambassador_id   INTEGER PRIMARY KEY,
         ambassador_name TEXT    NOT NULL,
         college_name    TEXT    NOT NULL DEFAULT '',
+        country         TEXT    NOT NULL DEFAULT '',
+        region          TEXT    NOT NULL DEFAULT '',
+        timezone_str    TEXT    NOT NULL DEFAULT 'UTC',
         current_stage   TEXT    NOT NULL DEFAULT 'PLANNING'
                         CHECK(current_stage IN ('PLANNING','SETUP','OUTREACH','LIVE','REWARDS')),
         notes           TEXT    NOT NULL DEFAULT '',
@@ -179,6 +182,8 @@ _SQLITE_SCHEMA = """
         ambassador_id   INTEGER PRIMARY KEY,
         ambassador_name TEXT    NOT NULL,
         college_name    TEXT    NOT NULL DEFAULT '',
+        country         TEXT    NOT NULL DEFAULT '',
+        region          TEXT    NOT NULL DEFAULT '',
         total_points    INTEGER NOT NULL DEFAULT 0,
         tier_name       TEXT    NOT NULL DEFAULT 'Apprentice Ambassador',
         contests_hosted INTEGER NOT NULL DEFAULT 0,
@@ -195,8 +200,31 @@ _SQLITE_SCHEMA = """
         created_at      TEXT    NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS collab_requests (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        requester_id    INTEGER NOT NULL,
+        requester_name  TEXT    NOT NULL,
+        target_id       INTEGER NOT NULL DEFAULT 0,
+        target_country  TEXT    NOT NULL DEFAULT '',
+        event_name      TEXT    NOT NULL,
+        event_format    TEXT    NOT NULL DEFAULT '',
+        proposed_date   TEXT    NOT NULL DEFAULT '',
+        message         TEXT    NOT NULL DEFAULT '',
+        status          TEXT    NOT NULL DEFAULT 'OPEN'
+                        CHECK(status IN ('OPEN','ACCEPTED','DECLINED','COMPLETED')),
+        created_at      TEXT    NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_points_ambassador
         ON points_ledger(ambassador_id);
+    CREATE INDEX IF NOT EXISTS idx_points_country
+        ON ambassador_points(country);
+    CREATE INDEX IF NOT EXISTS idx_points_region
+        ON ambassador_points(region);
+    CREATE INDEX IF NOT EXISTS idx_profiles_country
+        ON ambassador_profiles(country);
+    CREATE INDEX IF NOT EXISTS idx_collab_status
+        ON collab_requests(status);
 """
 
 _PG_SCHEMA = """
@@ -238,6 +266,9 @@ _PG_SCHEMA = """
         ambassador_id   BIGINT PRIMARY KEY,
         ambassador_name TEXT    NOT NULL,
         college_name    TEXT    NOT NULL DEFAULT '',
+        country         TEXT    NOT NULL DEFAULT '',
+        region          TEXT    NOT NULL DEFAULT '',
+        timezone_str    TEXT    NOT NULL DEFAULT 'UTC',
         current_stage   TEXT    NOT NULL DEFAULT 'PLANNING'
                         CHECK(current_stage IN ('PLANNING','SETUP','OUTREACH','LIVE','REWARDS')),
         notes           TEXT    NOT NULL DEFAULT '',
@@ -265,6 +296,8 @@ _PG_SCHEMA = """
         ambassador_id   BIGINT PRIMARY KEY,
         ambassador_name TEXT    NOT NULL,
         college_name    TEXT    NOT NULL DEFAULT '',
+        country         TEXT    NOT NULL DEFAULT '',
+        region          TEXT    NOT NULL DEFAULT '',
         total_points    INTEGER NOT NULL DEFAULT 0,
         tier_name       TEXT    NOT NULL DEFAULT 'Apprentice Ambassador',
         contests_hosted INTEGER NOT NULL DEFAULT 0,
@@ -281,8 +314,31 @@ _PG_SCHEMA = """
         created_at      TEXT    NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS collab_requests (
+        id              SERIAL PRIMARY KEY,
+        requester_id    BIGINT  NOT NULL,
+        requester_name  TEXT    NOT NULL,
+        target_id       BIGINT  NOT NULL DEFAULT 0,
+        target_country  TEXT    NOT NULL DEFAULT '',
+        event_name      TEXT    NOT NULL,
+        event_format    TEXT    NOT NULL DEFAULT '',
+        proposed_date   TEXT    NOT NULL DEFAULT '',
+        message         TEXT    NOT NULL DEFAULT '',
+        status          TEXT    NOT NULL DEFAULT 'OPEN'
+                        CHECK(status IN ('OPEN','ACCEPTED','DECLINED','COMPLETED')),
+        created_at      TEXT    NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_points_ambassador
         ON points_ledger(ambassador_id);
+    CREATE INDEX IF NOT EXISTS idx_points_country
+        ON ambassador_points(country);
+    CREATE INDEX IF NOT EXISTS idx_points_region
+        ON ambassador_points(region);
+    CREATE INDEX IF NOT EXISTS idx_profiles_country
+        ON ambassador_profiles(country);
+    CREATE INDEX IF NOT EXISTS idx_collab_status
+        ON collab_requests(status);
 """
 
 
@@ -448,35 +504,31 @@ def upsert_ambassador_profile(
     ambassador_id: int,
     ambassador_name: str,
     college_name: str = "",
+    country: str = "",
+    region: str = "",
+    timezone_str: str = "",
     current_stage: str = "PLANNING",
     notes: str = "",
 ) -> dict[str, Any]:
     now = _now_iso()
+    exc_kw = "EXCLUDED" if _using_postgres else "excluded"
 
-    if _using_postgres:
-        _execute(
-            """INSERT INTO ambassador_profiles (ambassador_id, ambassador_name, college_name, current_stage, notes, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(ambassador_id) DO UPDATE SET
-                 ambassador_name=EXCLUDED.ambassador_name,
-                 college_name=CASE WHEN EXCLUDED.college_name='' THEN ambassador_profiles.college_name ELSE EXCLUDED.college_name END,
-                 current_stage=EXCLUDED.current_stage,
-                 notes=CASE WHEN EXCLUDED.notes='' THEN ambassador_profiles.notes ELSE EXCLUDED.notes END,
-                 updated_at=EXCLUDED.updated_at""",
-            (ambassador_id, ambassador_name, college_name, current_stage, notes, now),
-        )
-    else:
-        _execute(
-            """INSERT INTO ambassador_profiles (ambassador_id, ambassador_name, college_name, current_stage, notes, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(ambassador_id) DO UPDATE SET
-                 ambassador_name=excluded.ambassador_name,
-                 college_name=CASE WHEN excluded.college_name='' THEN ambassador_profiles.college_name ELSE excluded.college_name END,
-                 current_stage=excluded.current_stage,
-                 notes=CASE WHEN excluded.notes='' THEN ambassador_profiles.notes ELSE excluded.notes END,
-                 updated_at=excluded.updated_at""",
-            (ambassador_id, ambassador_name, college_name, current_stage, notes, now),
-        )
+    _execute(
+        f"""INSERT INTO ambassador_profiles
+            (ambassador_id, ambassador_name, college_name, country, region, timezone_str, current_stage, notes, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ambassador_id) DO UPDATE SET
+              ambassador_name={exc_kw}.ambassador_name,
+              college_name=CASE WHEN {exc_kw}.college_name='' THEN ambassador_profiles.college_name ELSE {exc_kw}.college_name END,
+              country=CASE WHEN {exc_kw}.country='' THEN ambassador_profiles.country ELSE {exc_kw}.country END,
+              region=CASE WHEN {exc_kw}.region='' THEN ambassador_profiles.region ELSE {exc_kw}.region END,
+              timezone_str=CASE WHEN {exc_kw}.timezone_str='' THEN ambassador_profiles.timezone_str ELSE {exc_kw}.timezone_str END,
+              current_stage={exc_kw}.current_stage,
+              notes=CASE WHEN {exc_kw}.notes='' THEN ambassador_profiles.notes ELSE {exc_kw}.notes END,
+              updated_at={exc_kw}.updated_at""",
+        (ambassador_id, ambassador_name, college_name, country, region,
+         timezone_str or "UTC", current_stage, notes, now),
+    )
     return get_ambassador_profile(ambassador_id) or {}
 
 
@@ -600,11 +652,19 @@ def award_points(
     ambassador_id: int,
     ambassador_name: str,
     college_name: str = "",
+    country: str = "",
+    region: str = "",
     points_delta: int,
     action_type: str,
     description: str = "",
 ) -> dict[str, Any]:
     now = _now_iso()
+
+    if not country or not region:
+        profile = get_ambassador_profile(ambassador_id)
+        if profile:
+            country = country or profile.get("country", "")
+            region = region or profile.get("region", "")
 
     _execute(
         "INSERT INTO points_ledger (ambassador_id, points_delta, action_type, description, created_at) "
@@ -620,16 +680,19 @@ def award_points(
         tier = _compute_tier(new_total)
         _execute(
             "UPDATE ambassador_points SET total_points=?, tier_name=?, contests_hosted=?, "
-            "merch_events_count=?, updated_at=? WHERE ambassador_id=?",
-            (new_total, tier, new_contests, new_merch, now, ambassador_id),
+            "merch_events_count=?, country=CASE WHEN ?='' THEN country ELSE ? END, "
+            "region=CASE WHEN ?='' THEN region ELSE ? END, "
+            "updated_at=? WHERE ambassador_id=?",
+            (new_total, tier, new_contests, new_merch,
+             country, country, region, region, now, ambassador_id),
         )
     else:
         tier = _compute_tier(points_delta)
         _execute(
             "INSERT INTO ambassador_points (ambassador_id, ambassador_name, college_name, "
-            "total_points, tier_name, contests_hosted, merch_events_count, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (ambassador_id, ambassador_name, college_name, points_delta, tier,
+            "country, region, total_points, tier_name, contests_hosted, merch_events_count, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ambassador_id, ambassador_name, college_name, country, region, points_delta, tier,
              1 if action_type == "CONTEST_HOSTED" else 0,
              1 if action_type == "PARTICIPANTS_300_PLUS" else 0, now),
         )
@@ -641,10 +704,27 @@ def get_ambassador_points(ambassador_id: int) -> dict[str, Any] | None:
     return _fetchone("SELECT * FROM ambassador_points WHERE ambassador_id=?", (ambassador_id,))
 
 
-def get_national_leaderboard(limit: int = 10) -> list[dict[str, Any]]:
+def get_global_leaderboard(limit: int = 10) -> list[dict[str, Any]]:
     return _fetchall(
         "SELECT * FROM ambassador_points ORDER BY total_points DESC LIMIT ?",
         (limit,),
+    )
+
+
+get_national_leaderboard = get_global_leaderboard
+
+
+def get_region_leaderboard(region: str, limit: int = 10) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM ambassador_points WHERE region=? ORDER BY total_points DESC LIMIT ?",
+        (region, limit),
+    )
+
+
+def get_country_leaderboard(country: str, limit: int = 10) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM ambassador_points WHERE country=? ORDER BY total_points DESC LIMIT ?",
+        (country, limit),
     )
 
 
@@ -653,6 +733,92 @@ def get_college_leaderboard(college_name: str, limit: int = 10) -> list[dict[str
         "SELECT * FROM ambassador_points WHERE college_name=? ORDER BY total_points DESC LIMIT ?",
         (college_name, limit),
     )
+
+
+def find_ambassadors_by_country(country: str, limit: int = 20) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM ambassador_profiles WHERE country=? ORDER BY ambassador_name LIMIT ?",
+        (country, limit),
+    )
+
+
+def find_ambassadors_by_region(region: str, limit: int = 20) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM ambassador_profiles WHERE region=? ORDER BY country, ambassador_name LIMIT ?",
+        (region, limit),
+    )
+
+
+def create_collab_request(
+    *,
+    requester_id: int,
+    requester_name: str,
+    target_id: int = 0,
+    target_country: str = "",
+    event_name: str,
+    event_format: str = "",
+    proposed_date: str = "",
+    message: str = "",
+) -> dict[str, Any]:
+    now = _now_iso()
+    _execute(
+        """INSERT INTO collab_requests
+           (requester_id, requester_name, target_id, target_country,
+            event_name, event_format, proposed_date, message, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)""",
+        (requester_id, requester_name, target_id, target_country,
+         event_name, event_format, proposed_date, message, now),
+    )
+    if _using_postgres:
+        return _fetchone(
+            "SELECT * FROM collab_requests WHERE requester_id=? AND created_at=?",
+            (requester_id, now),
+        ) or {}
+    else:
+        conn = _get_sqlite_conn()
+        row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        return _fetchone("SELECT * FROM collab_requests WHERE id=?", (row_id,)) or {}
+
+
+def get_open_collab_requests(limit: int = 10) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM collab_requests WHERE status='OPEN' ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    )
+
+
+def update_collab_status(request_id: int, status: str) -> dict[str, Any] | None:
+    _execute("UPDATE collab_requests SET status=? WHERE id=?", (status, request_id))
+    return _fetchone("SELECT * FROM collab_requests WHERE id=?", (request_id,))
+
+
+REGIONS = {
+    "Asia-Pacific": [
+        "India", "Japan", "South Korea", "Singapore", "Malaysia", "Indonesia",
+        "Philippines", "Thailand", "Vietnam", "Bangladesh", "Sri Lanka", "Nepal",
+        "Pakistan", "Australia", "New Zealand", "China", "Taiwan", "Hong Kong",
+    ],
+    "EMEA": [
+        "United Kingdom", "Germany", "France", "Netherlands", "Spain", "Italy",
+        "Poland", "Sweden", "Norway", "Denmark", "Finland", "Ireland", "Belgium",
+        "Switzerland", "Austria", "Portugal", "Czech Republic", "Romania", "Hungary",
+        "Turkey", "Israel", "UAE", "Saudi Arabia", "Egypt", "Nigeria", "Kenya",
+        "South Africa", "Ghana", "Morocco",
+    ],
+    "Americas": [
+        "United States", "Canada", "Mexico", "Brazil", "Argentina", "Colombia",
+        "Chile", "Peru", "Ecuador", "Venezuela", "Costa Rica", "Uruguay",
+    ],
+}
+
+COUNTRY_TO_REGION: dict[str, str] = {}
+for _region, _countries in REGIONS.items():
+    for _c in _countries:
+        COUNTRY_TO_REGION[_c] = _region
+
+
+def resolve_region(country: str) -> str:
+    return COUNTRY_TO_REGION.get(country, "Other")
 
 
 def close_db() -> None:
