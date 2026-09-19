@@ -361,7 +361,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
 
     @tree.command(name="admin_stats", description="Monthly operations dashboard (leads only)")
     async def admin_stats_cmd(interaction: discord.Interaction) -> None:
-        if LEAD_IDS and interaction.user.id not in LEAD_IDS:
+        if not LEAD_IDS or interaction.user.id not in LEAD_IDS:
             await interaction.response.send_message(
                 "This command is restricted to program leads.", ephemeral=True
             )

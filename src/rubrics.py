@@ -39,7 +39,8 @@ SECRET_PATTERNS = re.compile(
     r"|/data/production/[a-zA-Z0-9_\-/]+"
     r"|DISCORD_BOT_TOKEN\s*=\s*\S+"
     r"|VLLM_API_KEY\s*=\s*\S+"
-    r"|Bearer\s+[A-Za-z0-9._\-]+)"
+    r"|Bearer\s+[A-Za-z0-9._\-]+"
+    r"|[MN][A-Za-z0-9_\-]{23,}\.[A-Za-z0-9_\-]{6}\.[A-Za-z0-9_\-]{27,})"
 )
 
 CHAKRA_PATTERN = re.compile(r"\bchakra\b", re.IGNORECASE)

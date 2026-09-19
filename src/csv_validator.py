@@ -45,19 +45,49 @@ class ContestResult:
     college_name: str = ""
 
 
+def _try_parse_xlsx(raw_bytes: bytes) -> str | None:
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
+        ws = wb.active
+        if ws is None:
+            return None
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        for row in ws.iter_rows(values_only=True):
+            writer.writerow([str(c) if c is not None else "" for c in row])
+        wb.close()
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
 def parse_contest_csv(
     raw_bytes: bytes,
     *,
     event_name: str = "Campus Event",
     event_date: str = "",
     college_name: str = "",
+    filename: str = "",
 ) -> ContestResult:
     result = ContestResult(event_name=event_name, college_name=college_name)
 
-    try:
-        text = raw_bytes.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = raw_bytes.decode("latin-1")
+    text: str | None = None
+
+    if filename.lower().endswith(".xlsx"):
+        text = _try_parse_xlsx(raw_bytes)
+        if text is None:
+            result.warnings.append("Could not parse .xlsx file. Please export as CSV.")
+            return result
+    else:
+        xlsx_text = _try_parse_xlsx(raw_bytes) if not raw_bytes[:3].isascii() else None
+        if xlsx_text:
+            text = xlsx_text
+        else:
+            try:
+                text = raw_bytes.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = raw_bytes.decode("latin-1")
 
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:

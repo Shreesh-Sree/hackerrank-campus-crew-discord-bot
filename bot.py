@@ -37,6 +37,7 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 _rate_buckets: dict[int, list[float]] = defaultdict(list)
+_user_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 def _check_rate_limit(user_id: int) -> bool:
@@ -155,14 +156,23 @@ async def on_message(message: discord.Message) -> None:
     }
 
     pipeline = get_pipeline()
+    lock = _user_locks[message.author.id]
 
-    # Show typing while the pipeline runs
-    try:
-        async with message.channel.typing():
-            result = await pipeline.ainvoke(state)
-    except Exception:
-        log.exception("Pipeline error for message from %s", message.author)
-        return
+    async with lock:
+        # Run sentinel classification first WITHOUT typing indicator
+        from src.graph import sentinel_node
+        sentinel_result = await sentinel_node(state)
+        if sentinel_result.get("verdict") == "DISMISS":
+            return
+
+        # Only show typing for messages we'll actually respond to
+        try:
+            async with message.channel.typing():
+                state.update(sentinel_result)  # type: ignore[arg-type]
+                result = await pipeline.ainvoke(state)
+        except Exception:
+            log.exception("Pipeline error for message from %s", message.author)
+            return
 
     if result.get("verdict") == "DISMISS":
         return
@@ -197,7 +207,7 @@ async def _handle_csv_upload(
             return
 
         event_name = attachment.filename.rsplit(".", 1)[0]
-        result = parse_contest_csv(raw, event_name=event_name)
+        result = parse_contest_csv(raw, event_name=event_name, filename=attachment.filename)
 
         if result.warnings and result.active_participants == 0:
             await message.reply(
