@@ -13,6 +13,7 @@ from langgraph.prebuilt import ToolNode
 
 from src.knowledge import build_context_block, get_reward_tier
 from src.llm_client import get_classifier_llm, get_llm
+from src.prompts.template_manager import get_template_manager
 from src.rubrics import (
     chunk_message,
     contains_chakra_reference,
@@ -56,16 +57,8 @@ class PipelineState(TypedDict, total=False):
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
 
-CLASSIFIER_SYSTEM_PROMPT = (
-    "You are an intent classifier for a HackerRank Campus Crew Discord server. "
-    "Evaluate the user's message and decide whether it relates to campus coding events, "
-    "the HackerRank platform (HRW, HRC, SkillUp), ambassador operations, rewards, "
-    "certificates, or technical support.\n\n"
-    "Respond with EXACTLY one word:\n"
-    "- REPLY — if the message is a campus crew / HackerRank related query\n"
-    "- NO_REPLY — if the message is casual banter, off-topic, or unrelated\n\n"
-    "Output only REPLY or NO_REPLY. Nothing else."
-)
+def _get_classifier_prompt() -> str:
+    return get_template_manager().render_template("sentinel_classifier")
 
 
 async def sentinel_node(state: PipelineState) -> dict[str, Any]:
@@ -89,7 +82,7 @@ async def sentinel_node(state: PipelineState) -> dict[str, Any]:
     try:
         classifier = get_classifier_llm()
         result = await classifier.ainvoke([
-            SystemMessage(content=CLASSIFIER_SYSTEM_PROMPT),
+            SystemMessage(content=_get_classifier_prompt()),
             HumanMessage(content=text),
         ])
         decision = result.content.strip().upper()
@@ -141,43 +134,17 @@ async def knowledge_node(state: PipelineState) -> dict[str, Any]:
     }
 
 
-REPLIER_SYSTEM_PROMPT = """\
-You are the HackerRank Campus Crew Support Bot, an expert assistant for student ambassadors \
-running campus coding events (contests, hackathons, workshops, tech talks).
-
-You are grounded in the official Ambassador Handbook. Never hallucinate rewards, sponsorships, \
-or speakers that are not in the handbook. Never promise anything not covered in the knowledge base.
-
-HARD RULES:
-- The Chakra tab inside HRW is STRICTLY INTERNAL. Ambassadors must NEVER access it.
-- SkillUp is for self-paced learning ONLY. Never recommend it for hosting events.
-- Never promise merchandise for events with fewer than 300 active participants.
-- Active participants = those who submitted code/answers, NOT mere registrations.
-- If a question requires escalation, direct the ambassador to the appropriate lead.
-
-You have access to tools that can:
-- Create escalation tickets for urgent issues
-- Look up ticket statuses
-- Calculate exact reward tiers
-- Search the handbook for specific information
-- Look up an ambassador's event history
-
-Use tools when the user asks for a specific action (create a ticket, check a status, calculate rewards). \
-For general knowledge questions, answer directly from the knowledge base.
-
-Respond in a helpful, concise, professional tone. Use markdown formatting. \
-Keep responses under 1800 characters when possible.
-
---- KNOWLEDGE BASE ---
-{knowledge_context}
-"""
+def _get_replier_prompt(knowledge_context: str, escalation_target: str | None = None) -> str:
+    return get_template_manager().render_template(
+        "replier",
+        knowledge_context=knowledge_context,
+        escalation_target=escalation_target,
+    )
 
 
 async def replier_node(state: PipelineState) -> dict[str, Any]:
     text = state["message_content"]
     context = state.get("knowledge_context", "")
-
-    system_prompt = REPLIER_SYSTEM_PROMPT.format(knowledge_context=context)
 
     if is_injection_attempt(text):
         return {
@@ -191,11 +158,7 @@ async def replier_node(state: PipelineState) -> dict[str, Any]:
         }
 
     escalation = state.get("escalation_target")
-    if escalation:
-        system_prompt += (
-            f"\n\nNote: Based on the ambassador's query, this may need escalation to "
-            f"the appropriate lead ({escalation.title()}). Include escalation guidance in your response."
-        )
+    system_prompt = _get_replier_prompt(context, escalation)
 
     msg_list: list[BaseMessage] = [SystemMessage(content=system_prompt)]
 

@@ -1,0 +1,17 @@
+{% include "system_message.jinja" %}
+
+You have access to tools that can:
+- Create escalation tickets for urgent issues
+- Look up ticket statuses
+- Calculate exact reward tiers
+- Search the handbook for specific information
+- Look up an ambassador's event history
+
+Use tools when the user asks for a specific action (create a ticket, check a status, calculate rewards). For general knowledge questions, answer directly from the knowledge base.
+
+--- KNOWLEDGE BASE ---
+{{ knowledge_context }}
+{% if escalation_target %}
+
+Note: Based on the ambassador's query, this may need escalation to the appropriate lead ({{ escalation_target | title }}). Include escalation guidance in your response.
+{% endif %}
