@@ -269,8 +269,12 @@ async def _handle_csv_upload(
             )
             return
 
-        report = build_event_report(result, ambassador_name=str(message.author))
-        await message.channel.send(report)
+        try:
+            full_report = build_event_report(result, ambassador_name=str(message.author), include_emails=True)
+            await message.author.send(full_report)
+        except discord.Forbidden:
+            summary_report = build_event_report(result, ambassador_name=str(message.author), include_emails=False)
+            await message.channel.send(summary_report)
 
         record_event_submission(
             ambassador_id=message.author.id,

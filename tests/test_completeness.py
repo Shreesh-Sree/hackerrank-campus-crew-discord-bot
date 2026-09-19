@@ -47,13 +47,23 @@ class TestAutoReport:
             ["Zero", "zero@example.com", "0"],
         ])
         result = parse_contest_csv(csv, event_name="CodeStorm 2026")
-        report = build_event_report(result, ambassador_name="Siddharth")
+        report = build_event_report(result, ambassador_name="TestUser")
         assert "CodeStorm 2026" in report
-        assert "Siddharth" in report
+        assert "TestUser" in report
         assert "Active Participants" in report
         assert "2" in report
         assert "Alice" in report
-        assert "Sanskruti" in report
+        assert "Program Manager" in report
+        assert "alice@example.com" not in report
+
+    def test_report_includes_emails_when_requested(self) -> None:
+        csv = self._make_csv([
+            ["Name", "Email", "Score"],
+            ["Alice", "alice@example.com", "300"],
+        ])
+        result = parse_contest_csv(csv, event_name="Test")
+        report = build_event_report(result, include_emails=True)
+        assert "alice@example.com" in report
 
     def test_report_shows_completion_rate(self) -> None:
         csv = self._make_csv([

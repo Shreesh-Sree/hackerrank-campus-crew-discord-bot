@@ -226,9 +226,11 @@ def build_canva_file(result: ContestResult) -> discord.File:
     return discord.File(buf, filename="canva_bulk_certificates.csv")
 
 
-def build_event_report(result: ContestResult, ambassador_name: str = "") -> str:
+def build_event_report(
+    result: ContestResult, ambassador_name: str = "", include_emails: bool = False,
+) -> str:
     lines = [
-        "**Post-Event Report — Ready to send to Sanskruti (Program Manager)**",
+        "**Post-Event Report — Ready to send to Program Manager**",
         "",
         f"**Event Name:** {result.event_name}",
         f"**Ambassador:** {ambassador_name}" if ambassador_name else "",
@@ -245,8 +247,10 @@ def build_event_report(result: ContestResult, ambassador_name: str = "") -> str:
     if result.winners:
         lines.append("**Verified Winners:**")
         for i, w in enumerate(result.winners[:5], start=1):
-            email_part = f" | Email: {w['email']}" if w.get("email") else ""
-            lines.append(f"{i}. **{w['name']}** — {int(w['score'])} pts{email_part}")
+            if include_emails and w.get("email"):
+                lines.append(f"{i}. **{w['name']}** — {int(w['score'])} pts | Email: {w['email']}")
+            else:
+                lines.append(f"{i}. **{w['name']}** — {int(w['score'])} pts")
         lines.append("")
 
     lines.extend([
@@ -254,6 +258,6 @@ def build_event_report(result: ContestResult, ambassador_name: str = "") -> str:
         f"**CSV SHA256:** `{result.csv_sha256[:16]}...`",
         "",
         "---",
-        "*Copy the above and DM to Sanskruti for reward activation.*",
+        "*Copy the above and DM to the Program Manager for reward activation.*",
     ])
     return "\n".join(line for line in lines if line is not None)
