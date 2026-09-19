@@ -13,8 +13,8 @@ from discord.ext import commands, tasks
 from src.config import settings
 from src.context import memory
 from src.cert_generator import build_cert_preview_file
-from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
-from src.db import award_points, close_db, init_db, record_event_submission
+from src.csv_validator import build_canva_file, build_event_report, build_summary_embed, parse_contest_csv
+from src.db import ACHIEVEMENT_DEFS, award_points, check_and_grant_achievements, close_db, init_db, record_event_submission
 from src.escalation_views import PersistentTicketView
 from src.graph import PipelineState, get_pipeline
 from src.incident_cluster import incident_engine
@@ -269,6 +269,9 @@ async def _handle_csv_upload(
             )
             return
 
+        report = build_event_report(result, ambassador_name=str(message.author))
+        await message.channel.send(report)
+
         record_event_submission(
             ambassador_id=message.author.id,
             ambassador_name=str(message.author),
@@ -294,6 +297,17 @@ async def _handle_csv_upload(
                 action_type="PARTICIPANTS_300_PLUS",
                 description=f"{event_name}: {result.active_participants} participants (merch tier)",
             )
+
+        new_badges = check_and_grant_achievements(message.author.id, str(message.author))
+        if new_badges:
+            badge_lines = [
+                f"{ACHIEVEMENT_DEFS[b]['emoji']} **{ACHIEVEMENT_DEFS[b]['name']}** — {ACHIEVEMENT_DEFS[b]['desc']}"
+                for b in new_badges if b in ACHIEVEMENT_DEFS
+            ]
+            if badge_lines:
+                await message.channel.send(
+                    f"**New Achievement{'s' if len(badge_lines) > 1 else ''} Unlocked!**\n" + "\n".join(badge_lines)
+                )
 
 
 # ── Error handlers ────────────────────────────────────────────────────────

@@ -658,6 +658,72 @@ def get_monthly_stats() -> dict[str, Any]:
     }
 
 
+ACHIEVEMENT_DEFS: dict[str, dict[str, str | int]] = {
+    "first_event": {"emoji": "🎯", "name": "First Event", "desc": "Hosted your first campus event"},
+    "club_300": {"emoji": "🔥", "name": "300 Club", "desc": "Reached 300+ active participants"},
+    "five_streak": {"emoji": "⚡", "name": "5-Month Streak", "desc": "Hosted events 5 months in a row"},
+    "collaborator": {"emoji": "🤝", "name": "International Collaborator", "desc": "Completed a cross-country collab"},
+    "first_responder": {"emoji": "🚨", "name": "P0 First Responder", "desc": "Triaged a P0 emergency ticket"},
+    "ten_events": {"emoji": "🏅", "name": "Decathlon", "desc": "Hosted 10 contests"},
+    "thousand_participants": {"emoji": "🌍", "name": "Global Impact", "desc": "Reached 1,000 total participants"},
+}
+
+
+def grant_achievement(ambassador_id: int, achievement_key: str) -> bool:
+    existing = _fetchone(
+        "SELECT 1 FROM points_ledger WHERE ambassador_id=? AND action_type=?",
+        (ambassador_id, f"ACHIEVEMENT_{achievement_key.upper()}"),
+    )
+    if existing:
+        return False
+
+    defn = ACHIEVEMENT_DEFS.get(achievement_key)
+    if not defn:
+        return False
+
+    _execute(
+        "INSERT INTO points_ledger (ambassador_id, points_delta, action_type, description, created_at) "
+        "VALUES (?, 0, ?, ?, ?)",
+        (ambassador_id, f"ACHIEVEMENT_{achievement_key.upper()}", str(defn["name"]), _now_iso()),
+    )
+    return True
+
+
+def get_ambassador_achievements(ambassador_id: int) -> list[str]:
+    rows = _fetchall(
+        "SELECT action_type FROM points_ledger WHERE ambassador_id=? AND action_type LIKE 'ACHIEVEMENT_%'",
+        (ambassador_id,),
+    )
+    return [r["action_type"].replace("ACHIEVEMENT_", "").lower() for r in rows]
+
+
+def check_and_grant_achievements(ambassador_id: int, ambassador_name: str = "") -> list[str]:
+    granted: list[str] = []
+    existing = set(get_ambassador_achievements(ambassador_id))
+
+    pts = get_ambassador_points(ambassador_id)
+    events = get_ambassador_events(ambassador_id)
+
+    if events and "first_event" not in existing:
+        if grant_achievement(ambassador_id, "first_event"):
+            granted.append("first_event")
+
+    if pts and pts["merch_events_count"] >= 1 and "club_300" not in existing:
+        if grant_achievement(ambassador_id, "club_300"):
+            granted.append("club_300")
+
+    if pts and pts["contests_hosted"] >= 10 and "ten_events" not in existing:
+        if grant_achievement(ambassador_id, "ten_events"):
+            granted.append("ten_events")
+
+    total_p = sum(e["participant_count"] for e in events) if events else 0
+    if total_p >= 1000 and "thousand_participants" not in existing:
+        if grant_achievement(ambassador_id, "thousand_participants"):
+            granted.append("thousand_participants")
+
+    return granted
+
+
 TIER_THRESHOLDS = [
     (1000, "Hall of Fame"),
     (500, "National Fellow"),
@@ -758,6 +824,19 @@ def get_country_leaderboard(country: str, limit: int = 10) -> list[dict[str, Any
     return _fetchall(
         "SELECT * FROM ambassador_points WHERE country=? ORDER BY total_points DESC LIMIT ?",
         (country, limit),
+    )
+
+
+def get_inactive_ambassadors_this_month() -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    return _fetchall(
+        """SELECT p.* FROM ambassador_profiles p
+           WHERE NOT EXISTS (
+             SELECT 1 FROM ambassador_events e
+             WHERE e.ambassador_id = p.ambassador_id AND e.created_at >= ?
+           )""",
+        (month_start,),
     )
 
 

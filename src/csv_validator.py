@@ -224,3 +224,36 @@ def build_summary_embed(result: ContestResult) -> discord.Embed:
 def build_canva_file(result: ContestResult) -> discord.File:
     buf = io.BytesIO(result.canva_csv.encode("utf-8"))
     return discord.File(buf, filename="canva_bulk_certificates.csv")
+
+
+def build_event_report(result: ContestResult, ambassador_name: str = "") -> str:
+    lines = [
+        "**Post-Event Report — Ready to send to Sanskruti (Program Manager)**",
+        "",
+        f"**Event Name:** {result.event_name}",
+        f"**Ambassador:** {ambassador_name}" if ambassador_name else "",
+        f"**College:** {result.college_name}" if result.college_name else "",
+        f"**Platform:** HRW / HRC",
+        f"**Total Submissions:** {result.total_rows}",
+        f"**Active Participants (score > 0):** {result.active_participants}",
+        f"**Completion Rate:** {round(result.active_participants / max(result.total_rows, 1) * 100)}%",
+        f"**Reward Tier:** {result.reward_tier}",
+        f"**Merchandise Eligible:** {'Yes' if result.merch_eligible else 'No'}",
+        "",
+    ]
+
+    if result.winners:
+        lines.append("**Verified Winners:**")
+        for i, w in enumerate(result.winners[:5], start=1):
+            email_part = f" | Email: {w['email']}" if w.get("email") else ""
+            lines.append(f"{i}. **{w['name']}** — {int(w['score'])} pts{email_part}")
+        lines.append("")
+
+    lines.extend([
+        "**Certificates:** Issued via Canva Bulk Create (CSV attached)",
+        f"**CSV SHA256:** `{result.csv_sha256[:16]}...`",
+        "",
+        "---",
+        "*Copy the above and DM to Sanskruti for reward activation.*",
+    ])
+    return "\n".join(line for line in lines if line is not None)

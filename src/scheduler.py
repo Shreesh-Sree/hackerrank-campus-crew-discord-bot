@@ -7,7 +7,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.config import settings
-from src.db import get_events_in_window, get_monthly_stats
+from src.db import get_events_in_window, get_inactive_ambassadors_this_month, get_monthly_stats
 
 log = logging.getLogger("hrcc.scheduler")
 
@@ -27,10 +27,12 @@ class SchedulerCog(commands.Cog):
     async def cog_load(self) -> None:
         self.event_reminder_loop.start()
         self.weekly_digest_loop.start()
+        self.compliance_nudge_loop.start()
 
     async def cog_unload(self) -> None:
         self.event_reminder_loop.cancel()
         self.weekly_digest_loop.cancel()
+        self.compliance_nudge_loop.cancel()
 
     @tasks.loop(minutes=30)
     async def event_reminder_loop(self) -> None:
@@ -50,6 +52,39 @@ class SchedulerCog(commands.Cog):
     @weekly_digest_loop.before_loop
     async def _wait_ready_digest(self) -> None:
         await self.bot.wait_until_ready()
+
+    @tasks.loop(hours=24)
+    async def compliance_nudge_loop(self) -> None:
+        now = datetime.now(timezone.utc)
+        if now.day < 20 or now.day > 25:
+            return
+        await self._send_compliance_nudges()
+
+    @compliance_nudge_loop.before_loop
+    async def _wait_ready_compliance(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _send_compliance_nudges(self) -> None:
+        inactive = get_inactive_ambassadors_this_month()
+        now = datetime.now(timezone.utc)
+        month_name = now.strftime("%B")
+        days_left = (now.replace(month=now.month % 12 + 1, day=1) - now).days if now.month < 12 else (now.replace(year=now.year + 1, month=1, day=1) - now).days
+
+        for amb in inactive:
+            await self._dm_ambassador(
+                amb["ambassador_id"],
+                f"**Monthly Compliance Reminder — {month_name}**\n\n"
+                f"You haven't recorded an event this month yet. "
+                f"You have **{days_left} days** remaining.\n\n"
+                f"**Quick options:**\n"
+                f"- `/create_event` or `/sop contest` to plan your event\n"
+                f"- `/collab_browse` to find a partner for a joint event\n"
+                f"- `/find_ambassador` to connect with ambassadors in your region\n\n"
+                f"Running at least one HackerRank-platform event per month "
+                f"is required to maintain active ambassador status.",
+            )
+        if inactive:
+            log.info("Sent compliance nudges to %d inactive ambassadors", len(inactive))
 
     async def _check_reminders(self) -> None:
         events_72h = _get_events_in_window(-73, -72)

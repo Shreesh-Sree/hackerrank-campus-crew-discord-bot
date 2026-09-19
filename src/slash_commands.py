@@ -12,12 +12,14 @@ import re
 from src.config import settings
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
 from src.db import (
+    ACHIEVEMENT_DEFS,
     REGIONS,
     TIER_BADGES,
     create_collab_request,
     create_ticket,
     find_ambassadors_by_country,
     find_ambassadors_by_region,
+    get_ambassador_achievements,
     get_ambassador_events,
     get_ambassador_points,
     get_ambassador_profile,
@@ -959,6 +961,13 @@ def register_commands(tree: app_commands.CommandTree) -> None:
                 for e in recent
             )
             embed.add_field(name="Recent Events", value=history, inline=False)
+
+        badges = get_ambassador_achievements(uid)
+        if badges:
+            badge_display = " ".join(
+                str(ACHIEVEMENT_DEFS[b]["emoji"]) for b in badges if b in ACHIEVEMENT_DEFS
+            )
+            embed.add_field(name="Achievements", value=badge_display, inline=False)
 
         embed.set_footer(text="Use /set_stage to update your lifecycle. Run at least 1 event/month.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
