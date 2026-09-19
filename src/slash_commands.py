@@ -11,24 +11,32 @@ import re
 
 from src.config import settings
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
+from src.auth_gate import Role, get_user_role
 from src.db import (
     ACHIEVEMENT_DEFS,
     REGIONS,
     TIER_BADGES,
+    add_moderator,
+    award_points,
     create_collab_request,
+    create_hrw_link,
     create_ticket,
     find_ambassadors_by_country,
     find_ambassadors_by_region,
+    get_all_ambassadors_export,
+    get_all_tickets,
     get_ambassador_achievements,
     get_ambassador_events,
     get_ambassador_points,
     get_ambassador_profile,
     get_country_leaderboard,
     get_global_leaderboard,
+    get_hrw_link,
     get_open_collab_requests,
     get_region_leaderboard,
     get_ticket,
     get_ticket_stats,
+    remove_moderator,
     resolve_region,
     update_ambassador_stage,
     update_collab_status,
@@ -1566,3 +1574,336 @@ def register_commands(tree: app_commands.CommandTree) -> None:
 
         embed.set_footer(text="Keep hosting events to climb the leaderboard!")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # REGISTRATION GATE
+    # ══════════════════════════════════════════════════════════════════════
+
+    class RegisterConfirmView(ui.View):
+        def __init__(self, user_id: int, hrw_user: dict) -> None:
+            super().__init__(timeout=120)
+            self.user_id = user_id
+            self.hrw_user = hrw_user
+
+        @ui.button(label="Yes, that's me", style=discord.ButtonStyle.success)
+        async def confirm(self, interaction: discord.Interaction, button: ui.Button) -> None:
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("Not your verification.", ephemeral=True)
+                return
+
+            u = self.hrw_user
+            hrw_id = str(u.get("id", ""))
+            email = u.get("email", "")
+            name = f"{u.get('firstname', '')} {u.get('lastname', '')}".strip()
+            country = u.get("country", "")
+            region = resolve_region(country) if country else ""
+
+            create_hrw_link(discord_id=self.user_id, hrw_user_id=hrw_id, hrw_email=email, hrw_name=name)
+            upsert_ambassador_profile(
+                ambassador_id=self.user_id, ambassador_name=name,
+                country=country, region=region,
+            )
+
+            self.clear_items()
+            await interaction.response.edit_message(
+                content=(
+                    f"**Registration complete!**\n\n"
+                    f"**Name:** {name}\n"
+                    f"**HRW Email:** {email}\n"
+                    f"**Country:** {country or 'Not set'} | **Region:** {region or 'N/A'}\n\n"
+                    f"You now have access to all ambassador commands.\n"
+                    f"Run `/my_status` to see your dashboard, or `/set_profile` to complete your profile."
+                ),
+                view=self,
+            )
+
+        @ui.button(label="Not me", style=discord.ButtonStyle.danger)
+        async def deny(self, interaction: discord.Interaction, button: ui.Button) -> None:
+            self.clear_items()
+            await interaction.response.edit_message(
+                content="Verification cancelled. Please try `/register` again with the correct HRW email.",
+                view=self,
+            )
+
+    class RegisterModal(ui.Modal, title="Ambassador Registration"):
+        hrw_email_input = ui.TextInput(
+            label="Your HackerRank for Work Email",
+            placeholder="The email you registered with on HRW",
+            required=True, max_length=200,
+        )
+
+        async def on_submit(self, interaction: discord.Interaction) -> None:
+            await interaction.response.defer(ephemeral=True)
+
+            email = self.hrw_email_input.value.strip()
+
+            existing = get_hrw_link(interaction.user.id)
+            if existing:
+                await interaction.followup.send(
+                    f"You're already registered as **{existing['hrw_name']}** ({existing['hrw_email']}).",
+                    ephemeral=True,
+                )
+                return
+
+            from src.hrw_api import find_hrw_user_by_email
+            try:
+                hrw_user = await find_hrw_user_by_email(email)
+            except Exception:
+                await interaction.followup.send(
+                    "Could not connect to HRW API. Please try again later.",
+                    ephemeral=True,
+                )
+                return
+
+            if not hrw_user:
+                await interaction.followup.send(
+                    f"No HRW account found for `{email}`.\n\n"
+                    f"**Check:**\n"
+                    f"1. Are you using the email you registered with on HRW?\n"
+                    f"2. Has your HRW account been activated?\n"
+                    f"3. Contact the Technical Lead if your activation is pending.",
+                    ephemeral=True,
+                )
+                return
+
+            name = f"{hrw_user.get('firstname', '')} {hrw_user.get('lastname', '')}".strip()
+            team_info = hrw_user.get("teams", [])
+            team_str = f" (Team: {', '.join(str(t) for t in team_info[:2])})" if team_info else ""
+
+            view = RegisterConfirmView(interaction.user.id, hrw_user)
+            await interaction.followup.send(
+                f"**Found HRW account:**\n"
+                f"**Name:** {name}\n"
+                f"**Email:** {email}\n"
+                f"**Role:** {hrw_user.get('role', '?')}{team_str}\n\n"
+                f"Is this you?",
+                view=view,
+                ephemeral=True,
+            )
+
+    @tree.command(name="register", description="Verify your HRW identity to unlock all bot commands")
+    async def register_cmd(interaction: discord.Interaction) -> None:
+        existing = get_hrw_link(interaction.user.id)
+        if existing:
+            await interaction.response.send_message(
+                f"You're already registered as **{existing['hrw_name']}** ({existing['hrw_email']}).",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(RegisterModal())
+
+    # ══════════════════════════════════════════════════════════════════════
+    # MODERATOR COMMANDS
+    # ══════════════════════════════════════════════════════════════════════
+
+    @tree.command(name="mod_lookup", description="[Mod] View any ambassador's profile and events")
+    @app_commands.describe(user="Ambassador to look up")
+    async def mod_lookup_cmd(interaction: discord.Interaction, user: discord.User) -> None:
+        role = get_user_role(interaction.user.id)
+        if role < Role.MODERATOR:
+            await interaction.response.send_message("Moderator access required.", ephemeral=True)
+            return
+
+        profile = get_ambassador_profile(user.id)
+        events = get_ambassador_events(user.id)
+        pts = get_ambassador_points(user.id)
+        link = get_hrw_link(user.id)
+
+        embed = discord.Embed(title=f"[Mod] Ambassador — {user.display_name}", color=discord.Color.dark_teal())
+        if link:
+            embed.add_field(name="HRW", value=f"{link['hrw_name']} ({link['hrw_email']})", inline=False)
+        if profile:
+            embed.add_field(name="College", value=profile.get("college_name") or "—", inline=True)
+            embed.add_field(name="Country", value=f"{profile.get('country', '—')} ({profile.get('region', '—')})", inline=True)
+            embed.add_field(name="Stage", value=profile.get("current_stage", "—"), inline=True)
+        if pts:
+            badge = TIER_BADGES.get(pts["tier_name"], "")
+            embed.add_field(name="Points", value=f"{badge} {pts['total_points']} ({pts['tier_name']})", inline=True)
+            embed.add_field(name="Contests", value=str(pts["contests_hosted"]), inline=True)
+        if events:
+            lines = [f"- {e['event_name']} ({e.get('event_date','—')}) — {e['participant_count']}p" for e in events[:5]]
+            embed.add_field(name=f"Events ({len(events)})", value="\n".join(lines), inline=False)
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @tree.command(name="mod_tickets", description="[Mod] View all open escalation tickets")
+    async def mod_tickets_cmd(interaction: discord.Interaction) -> None:
+        role = get_user_role(interaction.user.id)
+        if role < Role.MODERATOR:
+            await interaction.response.send_message("Moderator access required.", ephemeral=True)
+            return
+
+        tickets = get_all_tickets(limit=15)
+        open_tickets = [t for t in tickets if t["status"] != "RESOLVED"]
+
+        if not open_tickets:
+            await interaction.response.send_message("No open tickets.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="Open Escalation Tickets", color=discord.Color.orange())
+        for t in open_tickets[:10]:
+            embed.add_field(
+                name=f"{t['ticket_code']} — {t['urgency']} ({t['status']})",
+                value=f"**By:** {t['author_name']} | **To:** {t['poc_name'].title()}\n{t['description'][:100]}",
+                inline=False,
+            )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @tree.command(name="mod_activity", description="[Mod] View ambassador activity summary")
+    async def mod_activity_cmd(interaction: discord.Interaction) -> None:
+        role = get_user_role(interaction.user.id)
+        if role < Role.MODERATOR:
+            await interaction.response.send_message("Moderator access required.", ephemeral=True)
+            return
+
+        from src.db import get_inactive_ambassadors_this_month
+        inactive = get_inactive_ambassadors_this_month()
+        stats = get_ticket_stats()
+
+        embed = discord.Embed(title="Monthly Activity Overview", color=discord.Color.blue())
+        embed.add_field(name="Inactive Ambassadors", value=str(len(inactive)), inline=True)
+        embed.add_field(name="Open Tickets", value=str(stats["PENDING"]), inline=True)
+        embed.add_field(name="Total Tickets", value=str(stats["total"]), inline=True)
+
+        if inactive:
+            names = [a["ambassador_name"] for a in inactive[:10]]
+            embed.add_field(name="No Event This Month", value="\n".join(f"- {n}" for n in names), inline=False)
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ADMIN COMMANDS
+    # ══════════════════════════════════════════════════════════════════════
+
+    @tree.command(name="admin_points", description="[Admin] Manually award or deduct points")
+    @app_commands.describe(user="Ambassador", points="Points to add (negative to deduct)", reason="Reason")
+    async def admin_points_cmd(interaction: discord.Interaction, user: discord.User, points: int, reason: str) -> None:
+        role = get_user_role(interaction.user.id)
+        if role < Role.ADMIN:
+            await interaction.response.send_message("Admin access required.", ephemeral=True)
+            return
+
+        award_points(
+            ambassador_id=user.id, ambassador_name=user.display_name,
+            points_delta=points, action_type="ADMIN_MANUAL",
+            description=f"By {interaction.user.display_name}: {reason}",
+        )
+        await interaction.response.send_message(
+            f"{'Awarded' if points > 0 else 'Deducted'} **{abs(points)}** points {'to' if points > 0 else 'from'} {user.display_name}. Reason: {reason}",
+            ephemeral=True,
+        )
+
+    @tree.command(name="admin_set_mod", description="[Admin] Grant moderator role to an ambassador")
+    @app_commands.describe(user="Ambassador to promote")
+    async def admin_set_mod_cmd(interaction: discord.Interaction, user: discord.User) -> None:
+        role = get_user_role(interaction.user.id)
+        if role < Role.ADMIN:
+            await interaction.response.send_message("Admin access required.", ephemeral=True)
+            return
+
+        add_moderator(user.id, interaction.user.id)
+        await interaction.response.send_message(f"**{user.display_name}** is now a Moderator.", ephemeral=True)
+
+    @tree.command(name="admin_revoke", description="[Admin] Remove moderator role from a user")
+    @app_commands.describe(user="User to demote")
+    async def admin_revoke_cmd(interaction: discord.Interaction, user: discord.User) -> None:
+        role = get_user_role(interaction.user.id)
+        if role < Role.ADMIN:
+            await interaction.response.send_message("Admin access required.", ephemeral=True)
+            return
+
+        remove_moderator(user.id)
+        await interaction.response.send_message(f"Moderator role removed from **{user.display_name}**.", ephemeral=True)
+
+    @tree.command(name="admin_tickets", description="[Admin] View all escalation tickets")
+    async def admin_tickets_cmd(interaction: discord.Interaction) -> None:
+        role = get_user_role(interaction.user.id)
+        if role < Role.ADMIN:
+            await interaction.response.send_message("Admin access required.", ephemeral=True)
+            return
+
+        tickets = get_all_tickets(limit=20)
+        if not tickets:
+            await interaction.response.send_message("No tickets found.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="All Escalation Tickets (Recent 20)", color=discord.Color.dark_orange())
+        for t in tickets[:10]:
+            status_emoji = {"PENDING": "⏳", "ACKNOWLEDGED": "✅", "RESOLVED": "🔒"}.get(t["status"], "?")
+            embed.add_field(
+                name=f"{status_emoji} {t['ticket_code']} — {t['urgency']}",
+                value=f"{t['author_name']} → {t['poc_name'].title()} | {t['description'][:80]}",
+                inline=False,
+            )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @tree.command(name="admin_export", description="[Admin] Export full ambassador database as CSV")
+    async def admin_export_cmd(interaction: discord.Interaction) -> None:
+        role = get_user_role(interaction.user.id)
+        if role < Role.ADMIN:
+            await interaction.response.send_message("Admin access required.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        rows = get_all_ambassadors_export()
+
+        if not rows:
+            await interaction.followup.send("No ambassador data to export.", ephemeral=True)
+            return
+
+        import csv as csv_mod
+        buf = io.StringIO()
+        writer = csv_mod.DictWriter(buf, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+        file = discord.File(io.BytesIO(buf.getvalue().encode()), filename="ambassadors_export.csv")
+        await interaction.followup.send(f"Exported {len(rows)} ambassadors.", file=file, ephemeral=True)
+
+    @tree.command(name="admin_broadcast", description="[Admin] Send an announcement to all registered ambassadors")
+    @app_commands.describe(message="The announcement message")
+    async def admin_broadcast_cmd(interaction: discord.Interaction, message: str) -> None:
+        role = get_user_role(interaction.user.id)
+        if role < Role.ADMIN:
+            await interaction.response.send_message("Admin access required.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        from src.db import _fetchall
+        links = _fetchall("SELECT discord_id FROM hrw_links")
+        sent = 0
+        for link in links:
+            try:
+                user = await interaction.client.fetch_user(link["discord_id"])
+                await user.send(f"**Announcement from HackerRank Campus Crew:**\n\n{message}")
+                sent += 1
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+        await interaction.followup.send(f"Broadcast sent to {sent}/{len(links)} ambassadors.", ephemeral=True)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # OWNER COMMANDS
+    # ══════════════════════════════════════════════════════════════════════
+
+    @tree.command(name="owner_api_status", description="[Owner] Check HRW API health and quota")
+    async def owner_api_status_cmd(interaction: discord.Interaction) -> None:
+        role = get_user_role(interaction.user.id)
+        if role < Role.OWNER:
+            await interaction.response.send_message("Owner access required.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        from src.hrw_api import get_tests, get_hrw_users, get_questions
+        try:
+            tests = await get_tests(limit=1)
+            users = await get_hrw_users(limit=1)
+            questions = await get_questions(limit=1)
+
+            embed = discord.Embed(title="HRW API Status", color=discord.Color.green())
+            embed.add_field(name="Tests", value=str(tests.get("total", "?")), inline=True)
+            embed.add_field(name="Users", value=str(users.get("total", "?")), inline=True)
+            embed.add_field(name="Questions", value=str(questions.get("total", "?")), inline=True)
+            embed.add_field(name="Status", value="Connected", inline=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as exc:
+            await interaction.followup.send(f"HRW API Error: {exc}", ephemeral=True)

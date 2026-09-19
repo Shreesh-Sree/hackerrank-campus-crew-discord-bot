@@ -225,6 +225,20 @@ _SQLITE_SCHEMA = """
         ON ambassador_profiles(country);
     CREATE INDEX IF NOT EXISTS idx_collab_status
         ON collab_requests(status);
+
+    CREATE TABLE IF NOT EXISTS hrw_links (
+        discord_id      INTEGER PRIMARY KEY,
+        hrw_user_id     TEXT    NOT NULL,
+        hrw_email       TEXT    NOT NULL,
+        hrw_name        TEXT    NOT NULL DEFAULT '',
+        verified_at     TEXT    NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS moderators (
+        discord_id      INTEGER PRIMARY KEY,
+        granted_by      INTEGER NOT NULL,
+        granted_at      TEXT    NOT NULL
+    );
 """
 
 _PG_SCHEMA = """
@@ -339,6 +353,20 @@ _PG_SCHEMA = """
         ON ambassador_profiles(country);
     CREATE INDEX IF NOT EXISTS idx_collab_status
         ON collab_requests(status);
+
+    CREATE TABLE IF NOT EXISTS hrw_links (
+        discord_id      BIGINT PRIMARY KEY,
+        hrw_user_id     TEXT    NOT NULL,
+        hrw_email       TEXT    NOT NULL,
+        hrw_name        TEXT    NOT NULL DEFAULT '',
+        verified_at     TEXT    NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS moderators (
+        discord_id      BIGINT PRIMARY KEY,
+        granted_by      BIGINT  NOT NULL,
+        granted_at      TEXT    NOT NULL
+    );
 """
 
 
@@ -969,6 +997,67 @@ for _region, _countries in REGIONS.items():
 
 def resolve_region(country: str) -> str:
     return COUNTRY_TO_REGION.get(country, "Other")
+
+
+def create_hrw_link(
+    *, discord_id: int, hrw_user_id: str, hrw_email: str, hrw_name: str = "",
+) -> dict[str, Any]:
+    now = _now_iso()
+    exc_kw = "EXCLUDED" if _using_postgres else "excluded"
+    _execute(
+        f"""INSERT INTO hrw_links (discord_id, hrw_user_id, hrw_email, hrw_name, verified_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(discord_id) DO UPDATE SET
+              hrw_user_id={exc_kw}.hrw_user_id,
+              hrw_email={exc_kw}.hrw_email,
+              hrw_name={exc_kw}.hrw_name,
+              verified_at={exc_kw}.verified_at""",
+        (discord_id, hrw_user_id, hrw_email, hrw_name, now),
+    )
+    return get_hrw_link(discord_id) or {}
+
+
+def get_hrw_link(discord_id: int) -> dict[str, Any] | None:
+    return _fetchone("SELECT * FROM hrw_links WHERE discord_id=?", (discord_id,))
+
+
+def add_moderator(discord_id: int, granted_by: int) -> None:
+    now = _now_iso()
+    _execute(
+        "INSERT INTO moderators (discord_id, granted_by, granted_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(discord_id) DO NOTHING",
+        (discord_id, granted_by, now),
+    )
+
+
+def remove_moderator(discord_id: int) -> None:
+    _execute("DELETE FROM moderators WHERE discord_id=?", (discord_id,))
+
+
+def is_moderator(discord_id: int) -> bool:
+    row = _fetchone("SELECT 1 FROM moderators WHERE discord_id=?", (discord_id,))
+    return row is not None
+
+
+def get_all_tickets(limit: int = 20) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM escalation_tickets ORDER BY created_at DESC LIMIT ?", (limit,)
+    )
+
+
+def get_all_ambassadors_export() -> list[dict[str, Any]]:
+    return _fetchall(
+        """SELECT p.ambassador_id, p.ambassador_name, p.college_name, p.country, p.region,
+                  p.timezone_str, p.current_stage,
+                  COALESCE(pt.total_points, 0) as total_points,
+                  COALESCE(pt.tier_name, 'Apprentice Ambassador') as tier_name,
+                  COALESCE(pt.contests_hosted, 0) as contests_hosted,
+                  h.hrw_email, h.hrw_user_id
+           FROM ambassador_profiles p
+           LEFT JOIN ambassador_points pt ON p.ambassador_id = pt.ambassador_id
+           LEFT JOIN hrw_links h ON p.ambassador_id = h.discord_id
+           ORDER BY COALESCE(pt.total_points, 0) DESC"""
+    )
 
 
 def close_db() -> None:

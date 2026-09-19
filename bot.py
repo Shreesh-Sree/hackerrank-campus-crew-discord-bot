@@ -10,6 +10,7 @@ from collections import defaultdict
 import discord
 from discord.ext import commands, tasks
 
+from src.auth_gate import check_gate, get_user_role, Role
 from src.config import settings
 from src.context import memory
 from src.cert_generator import build_cert_preview_file
@@ -125,6 +126,14 @@ async def on_message(message: discord.Message) -> None:
     if message.author == bot.user:
         return
     if message.author.bot:
+        return
+
+    # DM blocker — bot only works in server channels
+    if isinstance(message.channel, discord.DMChannel):
+        await message.reply(
+            "I only work within the HackerRank Campus Crew server. "
+            "Please use commands in the support channel."
+        )
         return
 
     # Attachment auto-detection
@@ -337,6 +346,19 @@ async def _handle_image_upload(
         )
         embed.set_footer(text="Upload a screenshot of any HRW/HRC error for instant diagnosis.")
         await message.reply(embed=embed, mention_author=False)
+
+
+# ── Auth gate for all slash commands ───────────────────────────────────────
+
+
+@bot.tree.interaction_check
+async def global_gate_check(interaction: discord.Interaction) -> bool:
+    cmd_name = interaction.command.name if interaction.command else ""
+    block_msg = check_gate(interaction.user.id, cmd_name)
+    if block_msg:
+        await interaction.response.send_message(block_msg, ephemeral=True)
+        return False
+    return True
 
 
 # ── Error handlers ────────────────────────────────────────────────────────

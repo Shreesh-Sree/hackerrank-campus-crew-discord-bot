@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     poc_discord_sreesanth: str = ""
     poc_discord_nitish: str = ""
 
+    # HRW API
+    hrw_api_key: str = ""
+
+    # Role-based access
+    owner_discord_id: str = ""
+
     # Escalation router
     enable_dm_routing: bool = True
     escalation_cooldown_hours: int = 2
