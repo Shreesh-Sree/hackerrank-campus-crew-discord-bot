@@ -239,6 +239,21 @@ _SQLITE_SCHEMA = """
         granted_by      INTEGER NOT NULL,
         granted_at      TEXT    NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS event_showcase (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        ambassador_id   INTEGER NOT NULL,
+        ambassador_name TEXT    NOT NULL,
+        event_name      TEXT    NOT NULL,
+        country         TEXT    NOT NULL DEFAULT '',
+        participant_count INTEGER NOT NULL DEFAULT 0,
+        highlight       TEXT    NOT NULL DEFAULT '',
+        top_winner      TEXT    NOT NULL DEFAULT '',
+        created_at      TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_showcase_created
+        ON event_showcase(created_at);
 """
 
 _PG_SCHEMA = """
@@ -367,6 +382,21 @@ _PG_SCHEMA = """
         granted_by      BIGINT  NOT NULL,
         granted_at      TEXT    NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS event_showcase (
+        id              SERIAL PRIMARY KEY,
+        ambassador_id   BIGINT  NOT NULL,
+        ambassador_name TEXT    NOT NULL,
+        event_name      TEXT    NOT NULL,
+        country         TEXT    NOT NULL DEFAULT '',
+        participant_count INTEGER NOT NULL DEFAULT 0,
+        highlight       TEXT    NOT NULL DEFAULT '',
+        top_winner      TEXT    NOT NULL DEFAULT '',
+        created_at      TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_showcase_created
+        ON event_showcase(created_at);
 """
 
 
@@ -1057,6 +1087,43 @@ def get_all_ambassadors_export() -> list[dict[str, Any]]:
            LEFT JOIN ambassador_points pt ON p.ambassador_id = pt.ambassador_id
            LEFT JOIN hrw_links h ON p.ambassador_id = h.discord_id
            ORDER BY COALESCE(pt.total_points, 0) DESC"""
+    )
+
+
+def create_showcase(
+    *,
+    ambassador_id: int,
+    ambassador_name: str,
+    event_name: str,
+    country: str = "",
+    participant_count: int = 0,
+    highlight: str = "",
+    top_winner: str = "",
+) -> dict[str, Any]:
+    now = _now_iso()
+    _execute(
+        """INSERT INTO event_showcase
+           (ambassador_id, ambassador_name, event_name, country, participant_count,
+            highlight, top_winner, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (ambassador_id, ambassador_name, event_name, country, participant_count,
+         highlight, top_winner, now),
+    )
+    return {"ambassador_name": ambassador_name, "event_name": event_name, "created_at": now}
+
+
+def get_recent_showcases(limit: int = 10) -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM event_showcase ORDER BY created_at DESC LIMIT ?", (limit,)
+    )
+
+
+def get_upcoming_events_calendar() -> list[dict[str, Any]]:
+    return _fetchall(
+        """SELECT ambassador_name, event_name, event_date, platform
+           FROM ambassador_events
+           WHERE event_date != '' AND event_date >= date('now')
+           ORDER BY event_date ASC LIMIT 15"""
     )
 
 

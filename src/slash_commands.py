@@ -11,6 +11,8 @@ import re
 
 from src.config import settings
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
+from datetime import datetime, timezone
+
 from src.auth_gate import Role, get_user_role
 from src.db import (
     ACHIEVEMENT_DEFS,
@@ -32,7 +34,11 @@ from src.db import (
     get_country_leaderboard,
     get_global_leaderboard,
     get_hrw_link,
+    get_monthly_stats,
     get_open_collab_requests,
+    get_recent_showcases,
+    get_upcoming_events_calendar,
+    create_showcase,
     get_region_leaderboard,
     get_ticket,
     get_ticket_stats,
@@ -1907,3 +1913,432 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as exc:
             await interaction.followup.send(f"HRW API Error: {exc}", ephemeral=True)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # HRW API COMMANDS (Tier 1)
+    # ══════════════════════════════════════════════════════════════════════
+
+    @tree.command(name="my_tests", description="View your HRW tests with live status")
+    async def my_tests_cmd(interaction: discord.Interaction) -> None:
+        link = get_hrw_link(interaction.user.id)
+        if not link:
+            await interaction.response.send_message("Run `/register` first.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        from src.hrw_api import get_tests_for_owner
+        try:
+            tests = await get_tests_for_owner(link["hrw_user_id"])
+        except Exception:
+            await interaction.followup.send("Could not connect to HRW API.", ephemeral=True)
+            return
+
+        if not tests:
+            await interaction.followup.send("No tests found under your HRW account.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="Your HRW Tests", color=discord.Color.blue())
+
+        for t in tests[:10]:
+            state_emoji = {"active": "🟢", "draft": "📝"}.get(t.get("state", ""), "⚪")
+            draft = " (DRAFT)" if t.get("draft") else ""
+            locked = " 🔒" if t.get("locked") else ""
+            q_count = len(t.get("questions", []))
+            sections = len(t.get("sections", []))
+
+            embed.add_field(
+                name=f"{state_emoji} {t['name'][:50]}{draft}{locked}",
+                value=(
+                    f"**ID:** `{t['id']}` | **Duration:** {t['duration']}min\n"
+                    f"**Questions:** {q_count} | **Sections:** {sections}\n"
+                    f"**Created:** {t.get('created_at', '?')[:10]}"
+                ),
+                inline=False,
+            )
+
+        embed.set_footer(text=f"Showing {min(len(tests), 10)} of {len(tests)} tests. Use /test_status [id] for details.")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @tree.command(name="test_status", description="Real-time contest monitoring for your test")
+    @app_commands.describe(test_id="HRW Test ID (from /my_tests)")
+    async def test_status_cmd(interaction: discord.Interaction, test_id: str) -> None:
+        link = get_hrw_link(interaction.user.id)
+        if not link:
+            await interaction.response.send_message("Run `/register` first.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        from src.hrw_api import verify_test_ownership, get_test, get_test_candidates
+        if not await verify_test_ownership(test_id, link["hrw_user_id"]):
+            role = get_user_role(interaction.user.id)
+            if role < Role.ADMIN:
+                await interaction.followup.send("You don't have access to this test.", ephemeral=True)
+                return
+
+        try:
+            test = await get_test(test_id)
+            candidates = await get_test_candidates(test_id, limit=10)
+        except Exception:
+            await interaction.followup.send("Could not fetch test data from HRW.", ephemeral=True)
+            return
+
+        total_candidates = candidates.get("total", 0)
+        status_counts = candidates.get("status_counts", {})
+
+        embed = discord.Embed(
+            title=f"Test Status — {test.get('name', test_id)[:50]}",
+            color=discord.Color.green() if total_candidates > 0 else discord.Color.orange(),
+        )
+        embed.add_field(name="Duration", value=f"{test.get('duration', '?')} min", inline=True)
+        embed.add_field(name="Questions", value=str(len(test.get("questions", []))), inline=True)
+        embed.add_field(name="State", value=test.get("state", "?"), inline=True)
+        embed.add_field(name="Total Candidates", value=str(total_candidates), inline=True)
+
+        if status_counts:
+            sc_text = "\n".join(f"**{k}:** {v}" for k, v in status_counts.items())
+            embed.add_field(name="Status Breakdown", value=sc_text, inline=False)
+
+        cand_list = candidates.get("data", [])
+        if cand_list:
+            lines = []
+            for c in cand_list[:5]:
+                name = c.get("full_name", c.get("email", "?"))
+                score = c.get("percentage_score", c.get("score", "?"))
+                status = c.get("status", "?")
+                lines.append(f"- **{name}** — Score: {score} | {status}")
+            embed.add_field(name="Recent Candidates", value="\n".join(lines), inline=False)
+
+        embed.set_footer(text="Data from HRW API. Refresh by running the command again.")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @tree.command(name="question_bank", description="Browse the HRW question library")
+    @app_commands.describe(question_type="Filter by question type", page="Page number (20 per page)")
+    @app_commands.choices(question_type=[
+        app_commands.Choice(name="Code (DSA/Algorithms)", value="code"),
+        app_commands.Choice(name="Multiple Choice (MCQ)", value="mcq"),
+        app_commands.Choice(name="Full-Stack Projects", value="fullstack"),
+        app_commands.Choice(name="All Types", value=""),
+    ])
+    async def question_bank_cmd(
+        interaction: discord.Interaction,
+        question_type: app_commands.Choice[str] = None,
+        page: int = 1,
+    ) -> None:
+        await interaction.response.defer()
+
+        from src.hrw_api import get_questions
+        q_type = question_type.value if question_type else ""
+        offset = (max(page, 1) - 1) * 20
+
+        try:
+            data = await get_questions(limit=20, offset=offset, q_type=q_type)
+        except Exception:
+            await interaction.followup.send("Could not connect to HRW API.")
+            return
+
+        questions = data.get("data", [])
+        total = data.get("total", 0)
+
+        if not questions:
+            await interaction.followup.send("No questions found for this filter.")
+            return
+
+        type_label = question_type.name if question_type and question_type.value else "All"
+        embed = discord.Embed(
+            title=f"HRW Question Bank — {type_label}",
+            color=discord.Color.purple(),
+        )
+
+        for q in questions[:10]:
+            name = q.get("name", "Untitled")[:45]
+            qtype = q.get("type", "?")
+            score = q.get("max_score", "?")
+            duration = q.get("recommended_duration", "?")
+            embed.add_field(
+                name=f"{name}",
+                value=f"Type: `{qtype}` | Score: {score} | ~{duration}min",
+                inline=False,
+            )
+
+        embed.set_footer(text=f"Page {page} | {total} total questions | /question_bank page:{page+1}")
+        await interaction.followup.send(embed=embed)
+
+    @tree.command(name="preflight", description="Deep test configuration validator via HRW API")
+    @app_commands.describe(test_id="HRW Test ID to validate")
+    async def preflight_cmd(interaction: discord.Interaction, test_id: str) -> None:
+        link = get_hrw_link(interaction.user.id)
+        if not link:
+            await interaction.response.send_message("Run `/register` first.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        from src.hrw_api import verify_test_ownership, get_test
+        if not await verify_test_ownership(test_id, link["hrw_user_id"]):
+            role = get_user_role(interaction.user.id)
+            if role < Role.ADMIN:
+                await interaction.followup.send("You don't have access to this test.", ephemeral=True)
+                return
+
+        try:
+            test = await get_test(test_id)
+        except Exception:
+            await interaction.followup.send("Could not fetch test from HRW.", ephemeral=True)
+            return
+
+        checks: list[str] = []
+        issues: list[str] = []
+
+        q_count = len(test.get("questions", []))
+        if q_count > 0:
+            checks.append(f"Questions added: {q_count}")
+        else:
+            issues.append("No questions added to the test!")
+
+        if test.get("locked"):
+            checks.append("Test is locked (private)")
+        else:
+            issues.append("Test is NOT locked — other workspace users can see/edit it")
+
+        if test.get("draft"):
+            issues.append("Test is still in DRAFT — candidates cannot access it")
+        else:
+            checks.append("Test is published (not draft)")
+
+        duration = test.get("duration", 0)
+        if duration > 0:
+            checks.append(f"Duration set: {duration} minutes")
+            if duration < 30:
+                issues.append("Duration is very short (<30min) — consider adding buffer")
+        else:
+            issues.append("No duration set!")
+
+        if test.get("start_time"):
+            checks.append(f"Start time: {test['start_time']}")
+        if test.get("end_time"):
+            checks.append(f"End time: {test['end_time']}")
+
+        sections = test.get("sections", [])
+        if sections:
+            checks.append(f"Sections: {len(sections)}")
+
+        color = discord.Color.green() if not issues else discord.Color.red()
+        embed = discord.Embed(
+            title=f"Pre-Flight Check — {test.get('name', test_id)[:50]}",
+            color=color,
+        )
+
+        if checks:
+            embed.add_field(name="Passed", value="\n".join(f"- {c}" for c in checks), inline=False)
+        if issues:
+            embed.add_field(name="Issues Found", value="\n".join(f"- {i}" for i in issues), inline=False)
+
+        embed.add_field(
+            name="Reminder",
+            value="Contests that reach end time CANNOT be reopened. Always add 15-30 min buffer.",
+            inline=False,
+        )
+        embed.set_footer(text=f"Test ID: {test_id}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # COMMUNITY & ENGAGEMENT (Tier 2)
+    # ══════════════════════════════════════════════════════════════════════
+
+    class ShowcaseModal(ui.Modal, title="Share Your Event Highlight"):
+        event_name_input = ui.TextInput(label="Event Name", required=True, max_length=200)
+        participants_input = ui.TextInput(label="Active Participants", required=True, max_length=10)
+        top_winner_input = ui.TextInput(label="Top Winner Name", required=False, max_length=100)
+        highlight_input = ui.TextInput(
+            label="Key Highlight / Takeaway",
+            style=discord.TextStyle.paragraph,
+            required=True, max_length=500,
+            placeholder="What made this event special?",
+        )
+
+        async def on_submit(self, interaction: discord.Interaction) -> None:
+            try:
+                pcount = int(self.participants_input.value.strip())
+            except ValueError:
+                pcount = 0
+
+            profile = get_ambassador_profile(interaction.user.id)
+            country = profile.get("country", "") if profile else ""
+
+            create_showcase(
+                ambassador_id=interaction.user.id,
+                ambassador_name=interaction.user.display_name,
+                event_name=self.event_name_input.value.strip(),
+                country=country,
+                participant_count=pcount,
+                highlight=self.highlight_input.value.strip(),
+                top_winner=self.top_winner_input.value.strip(),
+            )
+
+            embed = discord.Embed(
+                title=f"Event Showcase — {self.event_name_input.value}",
+                color=discord.Color.gold(),
+            )
+            embed.add_field(name="Ambassador", value=interaction.user.display_name, inline=True)
+            embed.add_field(name="Country", value=country or "—", inline=True)
+            embed.add_field(name="Participants", value=str(pcount), inline=True)
+            if self.top_winner_input.value:
+                embed.add_field(name="Top Winner", value=self.top_winner_input.value, inline=True)
+            embed.add_field(name="Highlight", value=self.highlight_input.value[:500], inline=False)
+
+            await interaction.response.send_message(embed=embed)
+
+    @tree.command(name="showcase", description="Share your event highlight with the community")
+    async def showcase_cmd(interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(ShowcaseModal())
+
+    @tree.command(name="showcase_feed", description="Browse recent event highlights from ambassadors worldwide")
+    async def showcase_feed_cmd(interaction: discord.Interaction) -> None:
+        showcases = get_recent_showcases(limit=10)
+        if not showcases:
+            await interaction.response.send_message("No showcases yet. Be the first — use `/showcase`!")
+            return
+
+        embed = discord.Embed(title="Event Showcase Feed", color=discord.Color.gold())
+        for s in showcases:
+            country = f" ({s.get('country', '')})" if s.get("country") else ""
+            embed.add_field(
+                name=f"{s['event_name']}{country}",
+                value=(
+                    f"**By:** {s['ambassador_name']} | **Participants:** {s['participant_count']}\n"
+                    f"{s.get('highlight', '')[:120]}"
+                ),
+                inline=False,
+            )
+        await interaction.response.send_message(embed=embed)
+
+    @tree.command(name="calendar", description="View upcoming events from ambassadors worldwide")
+    async def calendar_cmd(interaction: discord.Interaction) -> None:
+        events = get_upcoming_events_calendar()
+        if not events:
+            await interaction.response.send_message("No upcoming events scheduled.")
+            return
+
+        embed = discord.Embed(title="Upcoming Events Calendar", color=discord.Color.teal())
+        for e in events:
+            embed.add_field(
+                name=f"{e.get('event_date', '?')[:10]} — {e['event_name'][:40]}",
+                value=f"By: {e['ambassador_name']} | Platform: {e.get('platform', '?')}",
+                inline=False,
+            )
+        embed.set_footer(text="Submit events via /create_event or /submit_report to appear here.")
+        await interaction.response.send_message(embed=embed)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ANALYTICS & IMPACT (Tier 3)
+    # ══════════════════════════════════════════════════════════════════════
+
+    @tree.command(name="trends", description="Global program analytics and growth trends")
+    async def trends_cmd(interaction: discord.Interaction) -> None:
+        stats = get_monthly_stats()
+        lb = get_global_leaderboard(limit=1000)
+
+        total_ambassadors = len(lb)
+        total_points = sum(a["total_points"] for a in lb)
+        total_contests = sum(a["contests_hosted"] for a in lb)
+        countries = len(set(a.get("country", "") for a in lb if a.get("country")))
+        regions = len(set(a.get("region", "") for a in lb if a.get("region")))
+
+        tiers = {"Apprentice Ambassador": 0, "Campus Lead": 0, "National Fellow": 0, "Hall of Fame": 0}
+        for a in lb:
+            tier = a.get("tier_name", "Apprentice Ambassador")
+            tiers[tier] = tiers.get(tier, 0) + 1
+
+        month_name = datetime.now(timezone.utc).strftime("%B %Y")
+
+        embed = discord.Embed(title=f"Program Trends — {month_name}", color=discord.Color.dark_purple())
+        embed.add_field(
+            name="Global Reach",
+            value=(
+                f"**Ambassadors:** {total_ambassadors}\n"
+                f"**Countries:** {countries}\n"
+                f"**Regions:** {regions}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="This Month",
+            value=(
+                f"**Events:** {stats['total_events']}\n"
+                f"**Participants:** {stats['total_participants']}\n"
+                f"**Merch Events:** {stats['merch_events']}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="All-Time",
+            value=(
+                f"**Total Contests:** {total_contests}\n"
+                f"**Total Points:** {total_points}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Tier Distribution",
+            value="\n".join(
+                f"{TIER_BADGES.get(t, '?')} **{t}:** {c}" for t, c in tiers.items()
+            ),
+            inline=False,
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @tree.command(name="impact_report", description="Generate your personal impact summary (shareable)")
+    async def impact_report_cmd(interaction: discord.Interaction) -> None:
+        uid = interaction.user.id
+        events = get_ambassador_events(uid)
+        pts = get_ambassador_points(uid)
+        profile = get_ambassador_profile(uid)
+        achievements = get_ambassador_achievements(uid)
+
+        total_participants = sum(e["participant_count"] for e in events) if events else 0
+        merch_events = sum(1 for e in events if e.get("merch_eligible")) if events else 0
+        contests = pts["contests_hosted"] if pts else 0
+        tier = pts["tier_name"] if pts else "Apprentice Ambassador"
+        points = pts["total_points"] if pts else 0
+        badge = TIER_BADGES.get(tier, "🎖️")
+        country = profile.get("country", "") if profile else ""
+        college = profile.get("college_name", "") if profile else ""
+
+        badge_display = " ".join(
+            str(ACHIEVEMENT_DEFS[b]["emoji"]) for b in achievements if b in ACHIEVEMENT_DEFS
+        )
+
+        embed = discord.Embed(
+            title=f"Impact Report — {interaction.user.display_name}",
+            color=discord.Color.gold(),
+        )
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+
+        embed.description = (
+            f"**{interaction.user.display_name}** | {badge} {tier}\n"
+            f"{college}{(' | ' + country) if country else ''}\n\n"
+            f"**{contests}** events hosted | **{total_participants}** students engaged\n"
+            f"**{merch_events}** merch-tier events | **{points}** points earned"
+        )
+
+        if badge_display:
+            embed.add_field(name="Achievements", value=badge_display, inline=False)
+
+        embed.add_field(
+            name="Share This!",
+            value=(
+                f"Copy for LinkedIn:\n"
+                f"```\n"
+                f"Proud to be a HackerRank Campus Crew Ambassador! "
+                f"Hosted {contests} coding events engaging {total_participants} students. "
+                f"Currently ranked as {tier}. "
+                f"#HackerRankCampusCrew #CodingCommunity #TechLeadership\n"
+                f"```"
+            ),
+            inline=False,
+        )
+
+        embed.set_footer(text="Generated by HackerRank Campus Crew Bot")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
