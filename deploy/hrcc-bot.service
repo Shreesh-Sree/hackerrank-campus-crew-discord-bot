@@ -1,20 +1,19 @@
 [Unit]
 Description=HackerRank Campus Crew Discord Super Agent
-After=network.target vllm.service
+After=network.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=ai-server
-WorkingDirectory=/home/ai-server/hrcc_bot
-EnvironmentFile=/home/ai-server/hrcc_bot/.env
-ExecStart=/home/ai-server/hrcc_bot/.venv/bin/python main.py
+User=aethercode
+WorkingDirectory=/data/production/hrcc_bot
+EnvironmentFile=/data/production/hrcc_bot/.env
+ExecStart=/data/production/hrcc_bot/venv/bin/python bot.py
 
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535
 
-# Standard Systemd Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=hrcc-bot
