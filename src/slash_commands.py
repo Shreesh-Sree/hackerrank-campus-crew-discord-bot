@@ -7,9 +7,12 @@ from typing import Any
 import discord
 from discord import app_commands, ui
 
+import re
+
 from src.config import settings
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
 from src.db import (
+    create_ticket,
     get_ambassador_events,
     get_ambassador_profile,
     get_ticket,
@@ -17,6 +20,7 @@ from src.db import (
     update_ambassador_stage,
     upsert_ambassador_profile,
 )
+from src.escalation import CATEGORY_MAP, POC_DISPLAY, _classify_urgency, _get_poc_id
 
 log = logging.getLogger("hrcc.commands")
 
@@ -450,3 +454,160 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             )
         else:
             await interaction.response.send_message("Could not update your stage.", ephemeral=True)
+
+    # ── /escalate ─────────────────────────────────────────────────────────
+
+    class EscalateModal(ui.Modal, title="Escalate Issue"):
+        issue_desc = ui.TextInput(
+            label="Describe the issue",
+            style=discord.TextStyle.paragraph,
+            placeholder="What happened? Include any error messages or context...",
+            required=True,
+            max_length=1000,
+        )
+
+        def __init__(self, lead_key: str) -> None:
+            super().__init__()
+            self.lead_key = lead_key
+
+        async def on_submit(self, interaction: discord.Interaction) -> None:
+            category = CATEGORY_MAP.get(self.lead_key, "OPS")
+            urgency = _classify_urgency(self.issue_desc.value)
+            poc_id = _get_poc_id(self.lead_key)
+
+            ticket = create_ticket(
+                channel_id=interaction.channel_id or 0,
+                message_id=0,
+                author_id=interaction.user.id,
+                author_name=str(interaction.user),
+                category=category,
+                urgency=urgency,
+                poc_name=self.lead_key,
+                poc_id=poc_id,
+                description=self.issue_desc.value,
+            )
+
+            await interaction.response.send_message(
+                f"Ticket **{ticket['ticket_code']}** ({urgency}) dispatched to "
+                f"**{POC_DISPLAY.get(self.lead_key, self.lead_key)}**. "
+                f"You will be notified upon review.",
+                ephemeral=True,
+            )
+
+    @tree.command(name="escalate", description="Escalate an issue to a program lead")
+    @app_commands.describe(lead="Which lead to route this to")
+    @app_commands.choices(lead=[
+        app_commands.Choice(name="Sanskruti (Operations/Rewards)", value="sanskruti"),
+        app_commands.Choice(name="Sreesanth (Technical/Platform)", value="sreesanth"),
+        app_commands.Choice(name="Nitish (Design/Brand)", value="nitish"),
+    ])
+    async def escalate_cmd(interaction: discord.Interaction, lead: app_commands.Choice[str]) -> None:
+        await interaction.response.send_modal(EscalateModal(lead.value))
+
+    # ── /rules ────────────────────────────────────────────────────────────
+
+    @tree.command(name="rules", description="Platform rules and restrictions")
+    @app_commands.describe(platform="Which platform")
+    @app_commands.choices(platform=[
+        app_commands.Choice(name="HackerRank for Work (HRW)", value="hrw"),
+        app_commands.Choice(name="HackerRank Community (HRC)", value="hrc"),
+        app_commands.Choice(name="HackerRank SkillUp", value="skillup"),
+    ])
+    async def rules_cmd(interaction: discord.Interaction, platform: app_commands.Choice[str]) -> None:
+        from src.knowledge import get_platform_info
+        info = get_platform_info(platform.value)
+        name = info.get("name", platform.name)
+        url = info.get("url", "")
+        use = info.get("primary_use", "")
+        rules = info.get("rules", {})
+
+        embed = discord.Embed(title=f"Rules — {name}", color=discord.Color.dark_blue())
+        embed.add_field(name="URL", value=url or "N/A", inline=True)
+        embed.add_field(name="Purpose", value=use or "N/A", inline=False)
+
+        if isinstance(rules, dict):
+            for k, v in rules.items():
+                embed.add_field(name=k.replace("_", " ").title(), value=str(v), inline=False)
+        elif isinstance(rules, str):
+            embed.add_field(name="Rule", value=rules, inline=False)
+
+        sec = info.get("security_warning")
+        if sec:
+            embed.add_field(
+                name=f"SECURITY — {sec['tab_name']}",
+                value=sec["policy"],
+                inline=False,
+            )
+
+        features = info.get("features", [])
+        if features:
+            embed.add_field(
+                name="Features",
+                value="\n".join(f"- {f}" for f in features[:6]),
+                inline=False,
+            )
+
+        await interaction.response.send_message(embed=embed)
+
+    # ── /event_check ──────────────────────────────────────────────────────
+
+    @tree.command(name="event_check", description="Pre-flight validation for a contest URL")
+    @app_commands.describe(url="The HackerRank contest or test URL to validate")
+    async def event_check_cmd(interaction: discord.Interaction, url: str) -> None:
+        url_lower = url.lower()
+
+        if "chakra" in url_lower:
+            embed = discord.Embed(
+                title="CRITICAL SECURITY ALERT",
+                description=(
+                    "**Chakra tab link detected.** Do NOT share this link with participants.\n\n"
+                    "The Chakra tab is strictly internal to HackerRank staff. "
+                    "Use the standard HRW test link from your dashboard instead."
+                ),
+                color=discord.Color.red(),
+            )
+            await interaction.response.send_message(embed=embed)
+            return
+
+        if "skillup" in url_lower:
+            embed = discord.Embed(
+                title="Invalid Platform",
+                description=(
+                    "**SkillUp URL detected.** SkillUp cannot be used for hosting campus events.\n\n"
+                    "Use **HackerRank for Work (HRW)** or **HackerRank Community (HRC)** instead."
+                ),
+                color=discord.Color.red(),
+            )
+            await interaction.response.send_message(embed=embed)
+            return
+
+        if "hackerrank.com/work" in url_lower:
+            platform = "HackerRank for Work (HRW)"
+            color = discord.Color.green()
+        elif "hackerrank.com" in url_lower:
+            platform = "HackerRank Community (HRC)"
+            color = discord.Color.blue()
+        else:
+            embed = discord.Embed(
+                title="Unrecognized URL",
+                description="This doesn't appear to be a HackerRank URL. Please check the link.",
+                color=discord.Color.orange(),
+            )
+            await interaction.response.send_message(embed=embed)
+            return
+
+        checklist = (
+            f"**Platform:** {platform}\n"
+            f"**URL:** `{url}`\n\n"
+            f"**Pre-Event Checklist:**\n"
+            f"- [ ] Contest is published and link is accessible\n"
+            f"- [ ] 15-30 minute buffer time configured\n"
+            f"- [ ] Public link enabled (test in incognito mode)\n"
+            f"- [ ] Proctoring settings reviewed (webcam, tab-switch)\n"
+            f"- [ ] All questions tested and locked\n"
+            f"- [ ] Registration link shared on promotion channels\n"
+            f"- [ ] Emergency POC noted: **Sreesanth** (Tech), **Sanskruti** (Ops)"
+        )
+        embed = discord.Embed(title="Event Pre-Flight Check", description=checklist, color=color)
+        embed.set_footer(text="Run this check 24-48 hours before your event.")
+        await interaction.response.send_message(embed=embed)
