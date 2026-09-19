@@ -74,20 +74,18 @@ def parse_contest_csv(
 
     text: str | None = None
 
-    if filename.lower().endswith(".xlsx"):
+    is_xlsx = filename.lower().endswith(".xlsx") or raw_bytes[:4] == b"PK\x03\x04"
+
+    if is_xlsx:
         text = _try_parse_xlsx(raw_bytes)
         if text is None:
             result.warnings.append("Could not parse .xlsx file. Please export as CSV.")
             return result
     else:
-        xlsx_text = _try_parse_xlsx(raw_bytes) if not raw_bytes[:3].isascii() else None
-        if xlsx_text:
-            text = xlsx_text
-        else:
-            try:
-                text = raw_bytes.decode("utf-8-sig")
-            except UnicodeDecodeError:
-                text = raw_bytes.decode("latin-1")
+        try:
+            text = raw_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = raw_bytes.decode("latin-1")
 
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
