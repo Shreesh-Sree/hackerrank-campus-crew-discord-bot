@@ -81,6 +81,27 @@ def init_db() -> None:
             ON escalation_tickets(ticket_code);
         CREATE INDEX IF NOT EXISTS idx_events_ambassador
             ON ambassador_events(ambassador_id);
+
+        CREATE TABLE IF NOT EXISTS ambassador_profiles (
+            ambassador_id   INTEGER PRIMARY KEY,
+            ambassador_name TEXT    NOT NULL,
+            college_name    TEXT    NOT NULL DEFAULT '',
+            current_stage   TEXT    NOT NULL DEFAULT 'PLANNING'
+                            CHECK(current_stage IN ('PLANNING','SETUP','OUTREACH','LIVE','REWARDS')),
+            notes           TEXT    NOT NULL DEFAULT '',
+            updated_at      TEXT    NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS conversation_turns (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id   INTEGER NOT NULL,
+            role      TEXT    NOT NULL CHECK(role IN ('user','assistant')),
+            content   TEXT    NOT NULL,
+            timestamp TEXT    NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conv_user
+            ON conversation_turns(user_id, timestamp);
     """)
     conn.commit()
     log.info("Database initialized at %s", _DB_PATH)
@@ -224,6 +245,69 @@ def record_event_submission(
     row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     row = conn.execute("SELECT * FROM ambassador_events WHERE id=?", (row_id,)).fetchone()
     return dict(row)
+
+
+def upsert_ambassador_profile(
+    *,
+    ambassador_id: int,
+    ambassador_name: str,
+    college_name: str = "",
+    current_stage: str = "PLANNING",
+    notes: str = "",
+) -> dict[str, Any]:
+    conn = _get_conn()
+    now = _now_iso()
+    conn.execute(
+        """INSERT INTO ambassador_profiles (ambassador_id, ambassador_name, college_name, current_stage, notes, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(ambassador_id) DO UPDATE SET
+             ambassador_name=excluded.ambassador_name,
+             college_name=CASE WHEN excluded.college_name='' THEN ambassador_profiles.college_name ELSE excluded.college_name END,
+             current_stage=excluded.current_stage,
+             notes=CASE WHEN excluded.notes='' THEN ambassador_profiles.notes ELSE excluded.notes END,
+             updated_at=excluded.updated_at""",
+        (ambassador_id, ambassador_name, college_name, current_stage, notes, now),
+    )
+    conn.commit()
+    return get_ambassador_profile(ambassador_id) or {}
+
+
+def get_ambassador_profile(ambassador_id: int) -> dict[str, Any] | None:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM ambassador_profiles WHERE ambassador_id=?", (ambassador_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def update_ambassador_stage(ambassador_id: int, stage: str) -> dict[str, Any] | None:
+    conn = _get_conn()
+    now = _now_iso()
+    conn.execute(
+        "UPDATE ambassador_profiles SET current_stage=?, updated_at=? WHERE ambassador_id=?",
+        (stage, now, ambassador_id),
+    )
+    conn.commit()
+    return get_ambassador_profile(ambassador_id)
+
+
+def save_conversation_turn(user_id: int, role: str, content: str) -> None:
+    conn = _get_conn()
+    now = _now_iso()
+    conn.execute(
+        "INSERT INTO conversation_turns (user_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+        (user_id, role, content, now),
+    )
+    conn.commit()
+
+
+def get_conversation_turns(user_id: int, limit: int = 16) -> list[dict[str, str]]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT role, content FROM conversation_turns WHERE user_id=? ORDER BY timestamp DESC LIMIT ?",
+        (user_id, limit),
+    ).fetchall()
+    return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
 
 def close_db() -> None:

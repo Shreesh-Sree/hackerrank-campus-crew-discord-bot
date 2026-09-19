@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import Any, TypedDict
+from typing import Annotated, Any, Sequence, TypedDict
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
+from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.prebuilt import ToolNode
 
 from src.knowledge import build_context_block, get_reward_tier
 from src.llm_client import get_classifier_llm, get_llm
@@ -21,6 +23,7 @@ from src.rubrics import (
     is_noise,
     scrub_secrets,
 )
+from src.tools import ALL_TOOLS
 
 log = logging.getLogger("hrcc.graph")
 
@@ -50,10 +53,8 @@ class PipelineState(TypedDict, total=False):
     _t0: float
     latency_ms: float
 
+    messages: Annotated[Sequence[BaseMessage], add_messages]
 
-# ---------------------------------------------------------------------------
-# Node 1: Sentinel — Gatekeeper & Triage
-# ---------------------------------------------------------------------------
 
 CLASSIFIER_SYSTEM_PROMPT = (
     "You are an intent classifier for a HackerRank Campus Crew Discord server. "
@@ -100,10 +101,6 @@ async def sentinel_node(state: PipelineState) -> dict[str, Any]:
         return {"verdict": "DISMISS", "_t0": t0}
 
 
-# ---------------------------------------------------------------------------
-# Node 2: Knowledge Retrieval (Vector-less RAG)
-# ---------------------------------------------------------------------------
-
 async def knowledge_node(state: PipelineState) -> dict[str, Any]:
     text = state["message_content"]
     context_parts: list[str] = [build_context_block(query=text)]
@@ -144,10 +141,6 @@ async def knowledge_node(state: PipelineState) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Node 3: Replier — Response Generation
-# ---------------------------------------------------------------------------
-
 REPLIER_SYSTEM_PROMPT = """\
 You are the HackerRank Campus Crew Support Bot, an expert assistant for student ambassadors \
 running campus coding events (contests, hackathons, workshops, tech talks).
@@ -161,6 +154,16 @@ HARD RULES:
 - Never promise merchandise for events with fewer than 300 active participants.
 - Active participants = those who submitted code/answers, NOT mere registrations.
 - If a question requires escalation, direct the ambassador to the appropriate lead.
+
+You have access to tools that can:
+- Create escalation tickets for urgent issues
+- Look up ticket statuses
+- Calculate exact reward tiers
+- Search the handbook for specific information
+- Look up an ambassador's event history
+
+Use tools when the user asks for a specific action (create a ticket, check a status, calculate rewards). \
+For general knowledge questions, answer directly from the knowledge base.
 
 Respond in a helpful, concise, professional tone. Use markdown formatting. \
 Keep responses under 1800 characters when possible.
@@ -183,7 +186,8 @@ async def replier_node(state: PipelineState) -> dict[str, Any]:
                 "I can help you with campus event organization, platform guidance, "
                 "rewards information, and certificate generation. "
                 "How can I assist you today?"
-            )
+            ),
+            "messages": [],
         }
 
     escalation = state.get("escalation_target")
@@ -193,9 +197,7 @@ async def replier_node(state: PipelineState) -> dict[str, Any]:
             f"the appropriate lead ({escalation.title()}). Include escalation guidance in your response."
         )
 
-    messages: list[SystemMessage | HumanMessage | AIMessage] = [
-        SystemMessage(content=system_prompt),
-    ]
+    msg_list: list[BaseMessage] = [SystemMessage(content=system_prompt)]
 
     for entry in state.get("conversation_history") or []:
         role = entry.get("role", "")
@@ -203,16 +205,18 @@ async def replier_node(state: PipelineState) -> dict[str, Any]:
         if not content:
             continue
         if role == "assistant":
-            messages.append(AIMessage(content=content))
+            msg_list.append(AIMessage(content=content))
         else:
-            messages.append(HumanMessage(content=content))
+            msg_list.append(HumanMessage(content=content))
 
-    messages.append(HumanMessage(content=text))
+    msg_list.append(HumanMessage(content=text))
 
     try:
-        llm = get_llm()
-        result = await llm.ainvoke(messages)
-        return {"raw_response": result.content.strip()}
+        llm = get_llm().bind_tools(ALL_TOOLS)
+        result = await llm.ainvoke(msg_list)
+        if result.tool_calls:
+            return {"messages": msg_list + [result]}
+        return {"raw_response": result.content.strip(), "messages": []}
     except Exception as exc:
         log.exception("Replier LLM call failed")
         return {
@@ -221,12 +225,35 @@ async def replier_node(state: PipelineState) -> dict[str, Any]:
                 "Please try again in a moment, or reach out directly to the Campus Crew leads."
             ),
             "error": str(exc),
+            "messages": [],
         }
 
 
-# ---------------------------------------------------------------------------
-# Node 4: Auditor — Safety Critic & Formatter
-# ---------------------------------------------------------------------------
+async def tool_response_node(state: PipelineState) -> dict[str, Any]:
+    msgs = list(state.get("messages") or [])
+    if not msgs:
+        return {"raw_response": ""}
+
+    try:
+        llm = get_llm().bind_tools(ALL_TOOLS)
+        result = await llm.ainvoke(msgs)
+        return {"raw_response": result.content.strip(), "messages": msgs + [result]}
+    except Exception as exc:
+        log.exception("Tool response synthesis failed")
+        return {
+            "raw_response": "I encountered an issue processing the tool results. Please try again.",
+            "error": str(exc),
+        }
+
+
+def route_after_replier(state: PipelineState) -> str:
+    msgs = state.get("messages") or []
+    if msgs:
+        last = msgs[-1]
+        if isinstance(last, AIMessage) and getattr(last, "tool_calls", None):
+            return "tools"
+    return "auditor"
+
 
 async def auditor_node(state: PipelineState) -> dict[str, Any]:
     response = state.get("raw_response", "")
@@ -234,7 +261,6 @@ async def auditor_node(state: PipelineState) -> dict[str, Any]:
 
     response = scrub_secrets(response)
 
-    # Chakra guard
     if contains_chakra_reference(user_text):
         resp_lower = response.lower()
         if "chakra" in resp_lower and "access" in resp_lower:
@@ -246,7 +272,6 @@ async def auditor_node(state: PipelineState) -> dict[str, Any]:
                     "from **Sanskruti (Program Manager)**."
                 )
 
-    # SkillUp hosting guard
     if _SKILLUP_HOST_RE.search(user_text):
         resp_lower = response.lower()
         if not any(w in resp_lower for w in ("never", "must not", "do not", "don't", "cannot", "not used")):
@@ -268,32 +293,30 @@ async def auditor_node(state: PipelineState) -> dict[str, Any]:
     return {"final_chunks": chunks, "latency_ms": latency}
 
 
-# ---------------------------------------------------------------------------
-# Conditional edge: sentinel verdict routing
-# ---------------------------------------------------------------------------
-
 def route_after_sentinel(state: PipelineState) -> str:
     if state.get("verdict") == "ENGAGE":
         return "knowledge"
     return END
 
 
-# ---------------------------------------------------------------------------
-# Graph assembly
-# ---------------------------------------------------------------------------
-
 def build_pipeline() -> StateGraph:
+    tool_node = ToolNode(ALL_TOOLS)
+
     graph = StateGraph(PipelineState)
 
     graph.add_node("sentinel", sentinel_node)
     graph.add_node("knowledge", knowledge_node)
     graph.add_node("replier", replier_node)
+    graph.add_node("tools", tool_node)
+    graph.add_node("tool_response", tool_response_node)
     graph.add_node("auditor", auditor_node)
 
     graph.set_entry_point("sentinel")
     graph.add_conditional_edges("sentinel", route_after_sentinel, {"knowledge": "knowledge", END: END})
     graph.add_edge("knowledge", "replier")
-    graph.add_edge("replier", "auditor")
+    graph.add_conditional_edges("replier", route_after_replier, {"tools": "tools", "auditor": "auditor"})
+    graph.add_edge("tools", "tool_response")
+    graph.add_edge("tool_response", "auditor")
     graph.add_edge("auditor", END)
 
     return graph
