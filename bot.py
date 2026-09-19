@@ -18,6 +18,7 @@ from src.escalation_views import PersistentTicketView
 from src.graph import PipelineState, get_pipeline
 from src.knowledge import check_and_reload, load_knowledge, load_references
 from src.llm_client import get_llm
+from src.scheduler import setup_scheduler
 from src.slash_commands import register_commands
 
 logging.basicConfig(
@@ -69,6 +70,8 @@ async def on_ready() -> None:
         health_loop.start()
     if not knowledge_reload_loop.is_running():
         knowledge_reload_loop.start()
+
+    await setup_scheduler(bot)
 
     log.info(
         "HRCC Bot online as %s (id=%s) | guilds=%d",
