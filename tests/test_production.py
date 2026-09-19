@@ -319,20 +319,20 @@ class TestConversationMemory:
         history = mem.get_history(1)
         assert len(history) <= 16
 
-    def test_lru_eviction(self) -> None:
+    def test_lru_eviction_from_memory(self) -> None:
         mem = ConversationMemory(max_users=3)
         mem.add_user_message(1, "a")
         mem.add_user_message(2, "b")
         mem.add_user_message(3, "c")
         mem.add_user_message(4, "d")
-        assert mem.get_history(1) == []
+        assert 1 not in mem._store
         assert len(mem.get_history(2)) == 1
 
-    def test_clear(self) -> None:
+    def test_clear_removes_from_memory(self) -> None:
         mem = ConversationMemory()
         mem.add_user_message(1, "hello")
         mem.clear(1)
-        assert mem.get_history(1) == []
+        assert 1 not in mem._store
 
     def test_lru_touch_on_access(self) -> None:
         mem = ConversationMemory(max_users=3)
@@ -341,8 +341,18 @@ class TestConversationMemory:
         mem.add_user_message(3, "c")
         mem.get_history(1)
         mem.add_user_message(4, "d")
-        assert len(mem.get_history(1)) == 1
-        assert mem.get_history(2) == []
+        assert 1 in mem._store
+        assert 2 not in mem._store
+
+    def test_db_persistence_survives_eviction(self) -> None:
+        mem = ConversationMemory(max_users=2)
+        mem.add_user_message(500, "persisted msg")
+        mem.add_user_message(501, "b")
+        mem.add_user_message(502, "c")
+        assert 500 not in mem._store
+        history = mem.get_history(500)
+        assert len(history) >= 1
+        assert history[0]["content"] == "persisted msg"
 
 
 # ── Escalation Cooldown Tests ─────────────────────────────────────────────
