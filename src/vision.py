@@ -114,7 +114,8 @@ async def _query_endpoint(endpoint: dict[str, Any], payload: dict[str, Any]) -> 
     if endpoint["api_key"] and endpoint["api_key"] != "EMPTY":
         headers["Authorization"] = f"Bearer {endpoint['api_key']}"
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+    # 120s read: covers first-inference model cold loads (e.g. Ollama loading llava)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
         resp = await client.post(
             f"{endpoint['base_url'].rstrip('/')}/chat/completions",
             json=payload,
@@ -122,7 +123,10 @@ async def _query_endpoint(endpoint: dict[str, Any], payload: dict[str, Any]) -> 
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
+        content = (data["choices"][0]["message"]["content"] or "").strip()
+        if not content:
+            raise ValueError("endpoint returned empty completion (model likely lacks vision support)")
+        return content
 
 
 async def analyze_screenshot(image_bytes: bytes, filename: str = "image.png") -> str:
