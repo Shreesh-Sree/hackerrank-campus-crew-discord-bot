@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from datetime import datetime, timezone
 
 import discord
@@ -10,6 +11,21 @@ from src.config import settings
 from src.db import get_events_in_window, get_inactive_ambassadors_this_month, get_monthly_stats
 
 log = logging.getLogger("hrcc.scheduler")
+
+# Deduplication ledger for the 5-minute contest reminder loop.
+# Key: "ambassador_id|event_name|stage" — bounds memory growth.
+_sent_reminders: OrderedDict[str, None] = OrderedDict()
+_REMINDER_LEDGER_CAP = 1000
+
+
+def _should_send(ambassador_id: int, event_name: str, stage: str) -> bool:
+    key = f"{ambassador_id}|{event_name}|{stage}"
+    if key in _sent_reminders:
+        return False
+    _sent_reminders[key] = None
+    while len(_sent_reminders) > _REMINDER_LEDGER_CAP:
+        _sent_reminders.popitem(last=False)
+    return True
 
 
 def _get_events_in_window(hours_from: int, hours_to: int) -> list[dict]:
@@ -26,11 +42,13 @@ class SchedulerCog(commands.Cog):
 
     async def cog_load(self) -> None:
         self.event_reminder_loop.start()
+        self.contest_reminder_loop.start()
         self.weekly_digest_loop.start()
         self.compliance_nudge_loop.start()
 
     async def cog_unload(self) -> None:
         self.event_reminder_loop.cancel()
+        self.contest_reminder_loop.cancel()
         self.weekly_digest_loop.cancel()
         self.compliance_nudge_loop.cancel()
 
@@ -41,6 +59,73 @@ class SchedulerCog(commands.Cog):
     @event_reminder_loop.before_loop
     async def _wait_ready(self) -> None:
         await self.bot.wait_until_ready()
+
+    # ── Automated contest lifecycle reminders (5-minute cadence) ─────────
+
+    @tasks.loop(minutes=5)
+    async def contest_reminder_loop(self) -> None:
+        try:
+            await self._check_contest_reminders()
+        except Exception:
+            log.exception("Contest reminder loop iteration failed")
+
+    @contest_reminder_loop.before_loop
+    async def _wait_ready_contest(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _check_contest_reminders(self) -> None:
+        # T-24h — pre-event checklist to the HOME SUPPORT CHANNEL + DM
+        for ev in _get_events_in_window(-26, -24):
+            if not _should_send(ev["ambassador_id"], ev["event_name"], "T-24h"):
+                continue
+            await self._post_home_channel(
+                f"📋 **Pre-Event Checklist (T-24h)** — {ev['event_name']}\n\n"
+                f"An ambassador's contest starts in 24 hours. Final checks:\n"
+                f"- [ ] HRW assessment link tested in incognito mode\n"
+                f"- [ ] Contest published with correct start/end window (+30 min buffer)\n"
+                f"- [ ] Student login instructions prepared (HRW first, HRC fallback if access pending)\n"
+                f"- [ ] Proctoring plan confirmed — **Chakra tab is INTERNAL only, ambassadors must never open it**\n"
+                f"- [ ] Standby contacts ready: **Sanskruti** (Program Manager), **Sreesanth** (Technical Lead)"
+            )
+            await self._dm_ambassador(
+                ev["ambassador_id"],
+                f"**Pre-Event Checklist (T-24h)** — {ev['event_name']}\n\n"
+                f"Your contest is in 24 hours. Please confirm:\n"
+                f"- [ ] HRW link tested in incognito mode\n"
+                f"- [ ] Contest published with +30 minute buffer on end time\n"
+                f"- [ ] Student login instructions ready (HRW; HRC as fallback if access is pending)\n"
+                f"- [ ] Proctoring plan set — never open the internal **Chakra** tab\n"
+                f"- [ ] Standby contacts: **Sanskruti** (Program Manager), **Sreesanth** (Technical Lead)",
+            )
+
+        # T-1h — live proctoring reminder + standby contacts
+        for ev in _get_events_in_window(-2, -1):
+            if not _should_send(ev["ambassador_id"], ev["event_name"], "T-1h"):
+                continue
+            await self._dm_ambassador(
+                ev["ambassador_id"],
+                f"🔴 **LIVE IN 1 HOUR — {ev['event_name']}**\n\n"
+                f"**Proctoring protocol:**\n"
+                f"- Stay in the venue/channel until the contest window closes (+30 min buffer)\n"
+                f"- If HRW throws errors, route candidates to **HRC** (`hackerrank.com`) — never SkillUp\n"
+                f"- Screenshots of any error → upload here for instant triage\n\n"
+                f"**Standby contacts (escalate immediately if stuck):**\n"
+                f"- **Sanskruti** — Program Manager (rewards, onboarding, judges)\n"
+                f"- **Sreesanth** — Technical Lead (HRW access, platform bugs, proctoring disputes)"
+            )
+
+        # T+24h — export raw CSV and validate
+        for ev in _get_events_in_window(24, 25):
+            if not _should_send(ev["ambassador_id"], ev["event_name"], "T+24h"):
+                continue
+            await self._dm_ambassador(
+                ev["ambassador_id"],
+                f"📤 **Post-Event (T+24h)** — {ev['event_name']}\n\n"
+                f"Your contest concluded yesterday. Please:\n"
+                f"- [ ] Export the **raw contest CSV** from HRW/HRC (all columns, unedited)\n"
+                f"- [ ] Run `/validate_contest` with the CSV for certificate + rewards validation\n"
+                f"- [ ] Verify winner emails match their HackerRank accounts before submitting to **Sanskruti**"
+            )
 
     @tasks.loop(hours=24)
     async def weekly_digest_loop(self) -> None:
@@ -99,30 +184,7 @@ class SchedulerCog(commands.Cog):
                 f"- [ ] Start your promotion push if you haven't already",
             )
 
-        events_24h = _get_events_in_window(-25, -24)
-        for ev in events_24h:
-            await self._dm_ambassador(
-                ev["ambassador_id"],
-                f"**Pre-Event Checklist (T-24h)** — {ev['event_name']}\n\n"
-                f"Your event is **tomorrow**! Final checks:\n"
-                f"- [ ] Add 30-minute buffer time to contest end\n"
-                f"- [ ] Prepare student login instructions\n"
-                f"- [ ] Note emergency escalation POC: **Sreesanth** (Technical), **Sanskruti** (Operations)\n"
-                f"- [ ] Test the contest link in incognito mode\n"
-                f"- [ ] Post final reminder to all promotion channels",
-            )
-
-        events_post24 = _get_events_in_window(24, 25)
-        for ev in events_post24:
-            await self._dm_ambassador(
-                ev["ambassador_id"],
-                f"**Post-Event Action Required (T+24h)** — {ev['event_name']}\n\n"
-                f"Your event concluded yesterday. Please:\n"
-                f"- [ ] Export contest results CSV from HRW/HRC\n"
-                f"- [ ] Upload CSV for Canva certificate generation\n"
-                f"- [ ] Verify winner emails match their HackerRank accounts\n"
-                f"- [ ] Submit winner spreadsheet to **Sanskruti (Program Manager)**",
-            )
+        # T-24h and T+24h are handled by contest_reminder_loop (5-minute cadence).
 
     async def _send_weekly_digest(self) -> None:
         stats = _get_all_month_stats()
@@ -170,6 +232,23 @@ class SchedulerCog(commands.Cog):
         if profile and profile.get("timezone_str") and profile["timezone_str"] != "UTC":
             return f"\n*Your timezone: {profile['timezone_str']}*"
         return ""
+
+    async def _post_home_channel(self, content: str) -> None:
+        """Post an announcement to the configured HOME SUPPORT CHANNEL."""
+        if not settings.discord_home_channel:
+            log.debug("Home support channel not configured; skipping announcement")
+            return
+        try:
+            channel = self.bot.get_channel(settings.discord_home_channel)
+            if channel is None or not isinstance(channel, discord.TextChannel):
+                channel = await self.bot.fetch_channel(settings.discord_home_channel)
+            if channel is None or not isinstance(channel, discord.TextChannel):
+                log.warning("Home support channel %s not found", settings.discord_home_channel)
+                return
+            await channel.send(content)
+            log.info("Posted contest announcement to home channel %s", settings.discord_home_channel)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            log.warning("Could not post to home channel %s", settings.discord_home_channel)
 
     async def _dm_ambassador(self, ambassador_id: int, content: str) -> None:
         content += self._localize_note(ambassador_id)
