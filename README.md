@@ -93,6 +93,26 @@ The agent manages the complete ambassador lifecycle across 60+ countries — onb
 6. **Escalation Router** — P0/P1/P2 severity classification with interactive DM dispatch to leads
 7. **Safety Guardrails** — Prompt injection filtering, Discord bot token scrubbing, PII never in public channels
 
+### Enterprise Resilience & Failover
+
+The agent is built to stay live even when individual backends drop. Three independent resilience layers wrap the hot path:
+
+| Layer | Primary | Fallback | Behavior on primary failure |
+|---|---|---|---|
+| **LLM inference** | vLLM (`VLLM_BASE_URL`) | NVIDIA NIM / Ollama (`NIM_BASE_URL`) | `ResilientChatModel` proxy catches transport/API errors after retries, logs `[LLM FAILOVER]`, re-dispatches the identical request to the secondary engine. Both down → `LLMFailoverError`. Programming errors (typos, bad args) propagate immediately without a wasted fallback hop. |
+| **Database** | PostgreSQL (`DATABASE_URL`) | Persistent SQLite (`data/hrcc.db`) | Strict 3s connect timeout (`PG_CONNECT_TIMEOUT`). On failure logs `[DB FAILOVER]`, flips to SQLite, and re-initializes the schema. All reads/writes degrade Postgres→SQLite at runtime so the Discord event loop never crashes. |
+| **Vision / OCR** | vLLM multimodal | NIM vision → Ollama `llava` | Ordered endpoint chain; each hop is skipped on 400 (model lacks image support) or transport error, logging `[VISION FAILOVER]` until one succeeds. Empty completions are treated as a failed hop. |
+
+**Vision triage** additionally applies a deterministic severity classifier on top of the model output, appending a banner for each detected signal — **Chakra tab (P0 security trigger)**, **HRW 404 / inactive contest**, and **proctoring/disqualification violations** — so the critical safety message is never lost to model variance.
+
+**Automated contest lifecycle daemon** runs on a 5-minute cadence and drives three stage-gated reminders per event (deduplicated so each fires exactly once):
+
+| Stage | Channel | Content |
+|---|---|---|
+| **T-24h** | Home support channel + DM | Pre-event checklist — HRW link test, +30 min buffer, Chakra prohibition, standby POCs |
+| **T-1h** | DM | Live proctoring protocol, HRC fallback rule, escalation contacts (Sanskruti / Sreesanth) |
+| **T+24h** | DM | Export raw CSV and run `/validate_contest` for certificate + rewards validation |
+
 ---
 
 ## Authentication & Access Control
