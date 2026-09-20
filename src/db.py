@@ -61,9 +61,51 @@ def _get_pg_conn():
     import psycopg
     from psycopg.rows import dict_row
 
-    conn = psycopg.connect(settings.database_url, row_factory=dict_row, autocommit=False)
+    # Strict connect timeout — a dead/unreachable Postgres must fail fast
+    # so the SQLite fallback can take over instead of stalling the bot.
+    conn = psycopg.connect(
+        settings.database_url,
+        row_factory=dict_row,
+        autocommit=False,
+        connect_timeout=settings.pg_connect_timeout,
+    )
     _local.pg_conn = conn
     return conn
+
+
+def _pg_failover(exc: Exception) -> None:
+    """Switch from PostgreSQL to the persistent SQLite store after a connection failure.
+
+    Never raises — the Discord bot loop must survive database outages.
+    """
+    global _using_postgres
+
+    log.warning(
+        "[DB FAILOVER] PostgreSQL unreachable at %s. Falling back to persistent SQLite at %s (%s: %s)",
+        settings.database_url.split("@")[-1],
+        _SQLITE_PATH,
+        type(exc).__name__,
+        str(exc)[:200],
+    )
+
+    _using_postgres = False
+
+    # Drop the broken thread-local Postgres connection.
+    pg_conn = getattr(_local, "pg_conn", None)
+    if pg_conn is not None:
+        try:
+            pg_conn.close()
+        except Exception:
+            pass
+        _local.pg_conn = None
+
+    # Make sure the SQLite schema exists before routing traffic to it.
+    try:
+        conn = _get_sqlite_conn()
+        conn.executescript(_SQLITE_SCHEMA)
+        conn.commit()
+    except Exception:
+        log.exception("[DB FAILOVER] Failed to initialize SQLite fallback store")
 
 
 def _ph(n: int = 1) -> str:
@@ -78,39 +120,60 @@ def _p(*args: Any) -> tuple[Any, ...]:
 
 def _execute(sql: str, params: tuple = ()) -> None:
     if _using_postgres:
-        sql = sql.replace("?", "%s")
-        conn = _get_pg_conn()
-        conn.execute(sql, params)
-        conn.commit()
-    else:
+        try:
+            conn = _get_pg_conn()
+            conn.execute(sql.replace("?", "%s"), params)
+            conn.commit()
+            return
+        except Exception as exc:
+            _pg_failover(exc)
+
+    # SQLite path (primary, or fallback after a Postgres drop).
+    try:
         conn = _get_sqlite_conn()
         conn.execute(sql, params)
         conn.commit()
+    except Exception:
+        log.exception("SQLite write failed — statement dropped to protect the bot loop")
 
 
 def _fetchone(sql: str, params: tuple = ()) -> dict[str, Any] | None:
     if _using_postgres:
-        sql = sql.replace("?", "%s")
-        conn = _get_pg_conn()
-        cur = conn.execute(sql, params)
-        row = cur.fetchone()
-        return dict(row) if row else None
-    else:
+        try:
+            conn = _get_pg_conn()
+            cur = conn.execute(sql.replace("?", "%s"), params)
+            row = cur.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            _pg_failover(exc)
+
+    # SQLite path (primary, or fallback after a Postgres drop).
+    try:
         conn = _get_sqlite_conn()
         row = conn.execute(sql, params).fetchone()
         return dict(row) if row else None
+    except Exception:
+        log.exception("SQLite read failed — returning no rows to protect the bot loop")
+        return None
 
 
 def _fetchall(sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     if _using_postgres:
-        sql = sql.replace("?", "%s")
-        conn = _get_pg_conn()
-        cur = conn.execute(sql, params)
-        return [dict(r) for r in cur.fetchall()]
-    else:
+        try:
+            conn = _get_pg_conn()
+            cur = conn.execute(sql.replace("?", "%s"), params)
+            return [dict(r) for r in cur.fetchall()]
+        except Exception as exc:
+            _pg_failover(exc)
+
+    # SQLite path (primary, or fallback after a Postgres drop).
+    try:
         conn = _get_sqlite_conn()
         rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+    except Exception:
+        log.exception("SQLite read failed — returning no rows to protect the bot loop")
+        return []
 
 
 _SQLITE_SCHEMA = """
@@ -437,15 +500,19 @@ def init_db() -> None:
 
     if _is_postgres():
         _using_postgres = True
-        conn = _get_pg_conn()
-        for stmt in _PG_SCHEMA.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                conn.execute(stmt)
-        conn.commit()
-        log.info("PostgreSQL database initialized at %s", settings.database_url.split("@")[-1])
-    else:
-        _using_postgres = False
+        try:
+            conn = _get_pg_conn()
+            for stmt in _PG_SCHEMA.strip().split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    conn.execute(stmt)
+            conn.commit()
+            log.info("PostgreSQL database initialized at %s", settings.database_url.split("@")[-1])
+        except Exception as exc:
+            # Connection refused, host unreachable, timeout — degrade to SQLite.
+            _pg_failover(exc)
+
+    if not _using_postgres:
         conn = _get_sqlite_conn()
         conn.executescript(_SQLITE_SCHEMA)
         conn.commit()
@@ -465,16 +532,20 @@ _SQLITE_MIGRATIONS = [
 
 def _apply_migrations() -> None:
     if _using_postgres:
-        conn = _get_pg_conn()
-        for table, col, typedef in _SQLITE_MIGRATIONS:
-            pg_type = typedef.replace("TEXT", "TEXT").replace("INTEGER", "BIGINT")
-            try:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {pg_type}")
-                conn.commit()
-                log.info("Migration: added %s.%s", table, col)
-            except Exception:
-                conn.rollback()
-    else:
+        try:
+            conn = _get_pg_conn()
+            for table, col, typedef in _SQLITE_MIGRATIONS:
+                pg_type = typedef.replace("TEXT", "TEXT").replace("INTEGER", "BIGINT")
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {pg_type}")
+                    conn.commit()
+                    log.info("Migration: added %s.%s", table, col)
+                except Exception:
+                    conn.rollback()
+        except Exception as exc:
+            _pg_failover(exc)
+
+    if not _using_postgres:
         conn = _get_sqlite_conn()
         for table, col, typedef in _SQLITE_MIGRATIONS:
             try:
