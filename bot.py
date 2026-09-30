@@ -16,8 +16,8 @@ from src.context import memory
 from src.cert_generator import build_cert_preview_file
 from src.csv_validator import build_canva_file, build_event_report, build_summary_embed, parse_contest_csv
 from src.db import ACHIEVEMENT_DEFS, award_points, check_and_grant_achievements, close_db, init_db, log_audit, record_event_submission
-from src.escalation_views import PersistentTicketView
-from src.graph import PipelineState, get_pipeline
+from src.escalation_views import ConfirmDispatchView, PersistentTicketView
+from src.graph import PipelineState, extract_escalation_request, get_pipeline
 from src.incident_cluster import incident_engine
 from src.knowledge import check_and_reload, load_knowledge, load_references
 from src.llm_client import get_llm
@@ -223,12 +223,27 @@ async def on_message(message: discord.Message) -> None:
     memory.add_user_message(message.author.id, message.content)
     memory.add_assistant_message(message.author.id, chunks[0])
 
+    escalation = extract_escalation_request(result)
+    confirm_view: ConfirmDispatchView | None = None
+    if escalation:
+        confirm_view = ConfirmDispatchView(
+            requester_id=message.author.id,
+            channel_id=message.channel.id,
+            message_id=message.id,
+            lead_key=escalation["lead_key"],
+            description=escalation["description"] or message.content,
+        )
+
+    last_index = len(chunks) - 1
     for i, chunk in enumerate(chunks):
+        view = confirm_view if i == last_index else None
         try:
             if i == 0:
-                await message.reply(chunk, mention_author=False)
+                sent = await message.reply(chunk, mention_author=False, view=view)
             else:
-                await message.channel.send(chunk)
+                sent = await message.channel.send(chunk, view=view)
+            if view is not None:
+                view.message = sent
         except discord.HTTPException:
             log.exception("Failed to send chunk %d for message %s", i, message.id)
             break

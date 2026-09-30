@@ -3,18 +3,22 @@ from __future__ import annotations
 from langchain_core.tools import tool
 
 from src.db import (
-    create_ticket,
     get_ambassador_events,
     get_ticket,
 )
+from src.escalation import POC_DISPLAY, resolve_lead
 from src.knowledge import get_reward_tier, retrieve_relevant_chunks
+
+
+ESCALATION_TOOL_NAME = "create_escalation_ticket"
 
 
 @tool
 def create_escalation_ticket(
     category: str, urgency: str, description: str, poc_name: str
 ) -> str:
-    """Create an escalation ticket in the support system and return the ticket code.
+    """Prepare an escalation to a program lead. Nothing is sent until the
+    ambassador clicks the Confirm Dispatch button attached to your reply.
 
     Args:
         category: One of OPS, TECH, or DESIGN.
@@ -22,24 +26,18 @@ def create_escalation_ticket(
         description: Brief description of the issue.
         poc_name: Lead to route to — sanskruti, sreesanth, or nitish.
     """
-    try:
-        ticket = create_ticket(
-            channel_id=0,
-            message_id=0,
-            author_id=0,
-            author_name="agent",
-            category=category.upper(),
-            urgency=urgency.upper(),
-            poc_name=poc_name.lower(),
-            description=description,
-        )
+    lead_key = resolve_lead(poc_name, category)
+    if lead_key is None:
         return (
-            f"Ticket {ticket['ticket_code']} created. "
-            f"Category: {ticket['category']}, Urgency: {ticket['urgency']}, "
-            f"Assigned to: {ticket['poc_name'].title()}."
+            f"Failed to prepare escalation: unknown lead '{poc_name}' / category '{category}'. "
+            "Use sanskruti (OPS), sreesanth (TECH), or nitish (DESIGN)."
         )
-    except Exception as exc:
-        return f"Failed to create ticket: {exc}"
+    return (
+        f"Escalation to {POC_DISPLAY[lead_key]} prepared but NOT sent yet. "
+        "A 'Confirm Dispatch' button is attached to your reply; the lead is only notified "
+        "after the ambassador clicks it. Tell the ambassador to click Confirm Dispatch. "
+        "Do not mention a ticket code — none exists until they confirm."
+    )
 
 
 @tool

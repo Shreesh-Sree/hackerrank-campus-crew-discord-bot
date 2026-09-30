@@ -53,7 +53,7 @@ from src.db import (
     update_collab_status,
     upsert_ambassador_profile,
 )
-from src.escalation import CATEGORY_MAP, POC_DISPLAY, _classify_urgency, _get_poc_id
+from src.escalation import _get_poc_id, _send_poc_dm, format_outcome, open_escalation
 from src.hrw_api import get_questions_by_test, verify_test_ownership
 from src.verify_emails import (
     EmailVerifier,
@@ -551,28 +551,17 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             self.lead_key = lead_key
 
         async def on_submit(self, interaction: discord.Interaction) -> None:
-            category = CATEGORY_MAP.get(self.lead_key, "OPS")
-            urgency = _classify_urgency(self.issue_desc.value)
-            poc_id = _get_poc_id(self.lead_key)
-
-            ticket = create_ticket(
+            await interaction.response.defer(ephemeral=True)
+            outcome = await open_escalation(
+                client=interaction.client,
                 channel_id=interaction.channel_id or 0,
                 message_id=0,
                 author_id=interaction.user.id,
                 author_name=str(interaction.user),
-                category=category,
-                urgency=urgency,
-                poc_name=self.lead_key,
-                poc_id=poc_id,
+                lead_key=self.lead_key,
                 description=self.issue_desc.value,
             )
-
-            await interaction.response.send_message(
-                f"Ticket **{ticket['ticket_code']}** ({urgency}) dispatched to "
-                f"**{POC_DISPLAY.get(self.lead_key, self.lead_key)}**. "
-                f"You will be notified upon review.",
-                ephemeral=True,
-            )
+            await interaction.followup.send(format_outcome(outcome), ephemeral=True)
 
     @tree.command(name="escalate", description="Escalate an issue to a program lead")
     @app_commands.describe(lead="Which lead to route this to")
@@ -947,6 +936,8 @@ def register_commands(tree: app_commands.CommandTree) -> None:
                 f"**Important:** Do not announce a HackerRank speaker publicly until confirmed.",
                 ephemeral=True,
             )
+            if ticket["poc_id"] and settings.enable_dm_routing:
+                await _send_poc_dm(interaction.client, ticket)
 
     @tree.command(name="request_speaker", description="Request a HackerRank engineer speaker or judge")
     async def request_speaker_cmd(interaction: discord.Interaction) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -621,23 +621,17 @@ def get_ticket(ticket_code: str) -> dict[str, Any] | None:
 
 
 def get_recent_tickets(author_id: int, category: str, hours: int = 2) -> list[dict[str, Any]]:
-    if _using_postgres:
-        return _fetchall(
-            """SELECT * FROM escalation_tickets
-               WHERE author_id=? AND category=? AND status != 'RESOLVED'
-               AND created_at >= (NOW() - INTERVAL '1 hour' * ?)::text
-               ORDER BY created_at DESC""",
-            (author_id, category, hours),
-        )
-    else:
-        cutoff = datetime.now(timezone.utc).isoformat()
-        return _fetchall(
-            """SELECT * FROM escalation_tickets
-               WHERE author_id=? AND category=? AND status != 'RESOLVED'
-               AND created_at >= datetime(?, '-' || ? || ' hours')
-               ORDER BY created_at DESC""",
-            (author_id, category, cutoff, hours),
-        )
+    # created_at is stored as a UTC isoformat string, so compare against a
+    # cutoff in the same format (SQL datetime() output uses a space separator
+    # and would make every same-day ticket look recent).
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    return _fetchall(
+        """SELECT * FROM escalation_tickets
+           WHERE author_id=? AND category=? AND status != 'RESOLVED'
+           AND created_at >= ?
+           ORDER BY created_at DESC""",
+        (author_id, category, cutoff),
+    )
 
 
 def get_ticket_stats() -> dict[str, int]:

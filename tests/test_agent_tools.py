@@ -43,17 +43,26 @@ def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestToolCreateTicket:
-    def test_creates_ticket_and_returns_code(self) -> None:
+    def test_prepares_escalation_without_creating_ticket(self) -> None:
+        from src.db import get_ticket_stats
+
         result = create_escalation_ticket.invoke(
             {"category": "TECH", "urgency": "P1", "description": "HRW login broken", "poc_name": "sreesanth"}
         )
-        assert "HRCC-" in result
-        assert "TECH" in result
+        assert "Confirm Dispatch" in result
         assert "Sreesanth" in result
+        assert "HRCC-" not in result
+        assert get_ticket_stats()["total"] == 0
 
-    def test_invalid_category_reports_error(self) -> None:
+    def test_lead_resolved_from_category(self) -> None:
         result = create_escalation_ticket.invoke(
-            {"category": "INVALID", "urgency": "P1", "description": "test", "poc_name": "sreesanth"}
+            {"category": "DESIGN", "urgency": "P2", "description": "logo", "poc_name": "someone"}
+        )
+        assert "Nitish" in result
+
+    def test_invalid_lead_and_category_reports_error(self) -> None:
+        result = create_escalation_ticket.invoke(
+            {"category": "INVALID", "urgency": "P1", "description": "test", "poc_name": "nobody"}
         )
         assert "Failed" in result
 

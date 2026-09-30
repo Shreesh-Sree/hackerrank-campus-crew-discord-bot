@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import discord
@@ -55,75 +56,127 @@ def _classify_urgency(text: str) -> str:
     return "P2"
 
 
-def check_cooldown(author_id: int, category: str, urgency: str) -> bool:
+def resolve_lead(poc_name: str = "", category: str = "") -> str | None:
+    """Map a lead name or ticket category to a lead key, or None if neither is valid."""
+    key = (poc_name or "").strip().lower()
+    if key in CATEGORY_MAP:
+        return key
+    cat = (category or "").strip().upper()
+    for lead_key, lead_cat in CATEGORY_MAP.items():
+        if lead_cat == cat:
+            return lead_key
+    return None
+
+
+def find_open_duplicate(author_id: int, category: str, urgency: str) -> dict[str, Any] | None:
+    """Return the ambassador's open ticket in this category from the cooldown window, if any.
+
+    P0 emergencies bypass the cooldown when ``enable_p0_override`` is set.
+    """
     if urgency == "P0" and settings.enable_p0_override:
-        return False
+        return None
     recent = get_recent_tickets(
         author_id, category, hours=settings.escalation_cooldown_hours
     )
-    return len(recent) > 0
+    return recent[0] if recent else None
 
 
-async def dispatch_escalation(
+def check_cooldown(author_id: int, category: str, urgency: str) -> bool:
+    return find_open_duplicate(author_id, category, urgency) is not None
+
+
+@dataclass
+class EscalationOutcome:
+    lead_key: str
+    ticket: dict[str, Any] | None = None
+    duplicate_of: dict[str, Any] | None = None
+    dm_delivered: bool = False
+
+
+async def open_escalation(
     *,
     client: discord.Client,
-    message: discord.Message,
+    channel_id: int,
+    message_id: int,
+    author_id: int,
+    author_name: str,
     lead_key: str,
-    description: str = "",
-) -> dict[str, Any] | None:
-    category = CATEGORY_MAP.get(lead_key, "OPS")
-    urgency = _classify_urgency(description or message.content)
+    description: str,
+) -> EscalationOutcome:
+    """Create a ticket and DM the lead, enforcing the per-category cooldown.
 
-    if check_cooldown(message.author.id, category, urgency):
-        await message.reply(
-            f"You already have an active ticket for this category. "
-            f"Please wait before opening another (cooldown: {settings.escalation_cooldown_hours}h).",
-            mention_author=False,
-        )
-        return None
+    Shared by ``/escalate`` and chat-initiated escalations (after the
+    ambassador clicks Confirm Dispatch).
+    """
+    category = CATEGORY_MAP.get(lead_key, "OPS")
+    urgency = _classify_urgency(description)
+
+    existing = find_open_duplicate(author_id, category, urgency)
+    if existing:
+        return EscalationOutcome(lead_key=lead_key, duplicate_of=existing)
 
     poc_id = _get_poc_id(lead_key)
-
     ticket = create_ticket(
-        channel_id=message.channel.id,
-        message_id=message.id,
-        author_id=message.author.id,
-        author_name=str(message.author),
+        channel_id=channel_id,
+        message_id=message_id,
+        author_id=author_id,
+        author_name=author_name,
         category=category,
         urgency=urgency,
         poc_name=lead_key,
         poc_id=poc_id,
-        description=description or message.content,
+        description=description,
     )
 
     from src.db import log_audit
     log_audit(
-        actor_id=message.author.id, actor_name=str(message.author),
+        actor_id=author_id, actor_name=author_name,
         action="ESCALATE", details=f"{ticket['ticket_code']} {urgency} -> {lead_key}",
     )
 
-    await message.reply(
-        f"Ticket **{ticket['ticket_code']}** ({urgency}) dispatched to "
-        f"**{POC_DISPLAY.get(lead_key, lead_key)}**. You will be notified upon review.",
-        mention_author=False,
+    delivered = False
+    if poc_id and settings.enable_dm_routing:
+        delivered = await _send_poc_dm(client, ticket)
+    else:
+        log.warning(
+            "Ticket %s not DMed: POC id for %s is %s and DM routing is %s",
+            ticket["ticket_code"], lead_key, "set" if poc_id else "unset",
+            "on" if settings.enable_dm_routing else "off",
+        )
+    return EscalationOutcome(lead_key=lead_key, ticket=ticket, dm_delivered=delivered)
+
+
+def format_outcome(outcome: EscalationOutcome) -> str:
+    lead = POC_DISPLAY.get(outcome.lead_key, outcome.lead_key)
+    if outcome.duplicate_of:
+        dup = outcome.duplicate_of
+        return (
+            f"You already have an open ticket **{dup['ticket_code']}** ({dup['status']}) "
+            f"with **{dup['poc_name'].title()}** for this category, so I haven't pinged them again. "
+            f"Track it with `/ticket_status {dup['ticket_code']}`."
+        )
+    ticket = outcome.ticket or {}
+    if outcome.dm_delivered:
+        return (
+            f"Ticket **{ticket['ticket_code']}** ({ticket['urgency']}) dispatched to **{lead}**. "
+            f"You'll be notified here when they respond."
+        )
+    return (
+        f"Ticket **{ticket['ticket_code']}** ({ticket['urgency']}) logged for **{lead}**. "
+        f"I couldn't DM them directly, but it's in the leads' ticket queue."
     )
 
-    if poc_id and settings.enable_dm_routing:
-        await _send_poc_dm(client, ticket)
 
-    return ticket
-
-
-async def _send_poc_dm(client: discord.Client, ticket: dict[str, Any]) -> None:
+async def _send_poc_dm(client: discord.Client, ticket: dict[str, Any]) -> bool:
     poc_id_str = ticket["poc_id"]
     if not poc_id_str:
-        return
+        return False
 
     try:
         poc_user = await client.fetch_user(int(poc_id_str))
     except (discord.NotFound, discord.HTTPException, ValueError):
         log.warning("Could not fetch POC user %s for ticket %s", poc_id_str, ticket["ticket_code"])
-        return
+        return False
 
     urgency_label = {
         "P0": "P0 EMERGENCY",
@@ -155,7 +208,9 @@ async def _send_poc_dm(client: discord.Client, ticket: dict[str, Any]) -> None:
         dm_channel = await poc_user.create_dm()
         await dm_channel.send(embed=embed, view=view)
         log.info("DM sent to %s for ticket %s", poc_user, ticket["ticket_code"])
+        return True
     except discord.Forbidden:
         log.warning("Cannot DM %s (DMs disabled) for ticket %s", poc_user, ticket["ticket_code"])
     except discord.HTTPException:
         log.exception("Failed to DM %s for ticket %s", poc_user, ticket["ticket_code"])
+    return False

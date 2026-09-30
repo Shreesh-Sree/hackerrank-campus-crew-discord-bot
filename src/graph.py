@@ -24,7 +24,8 @@ from src.rubrics import (
     is_noise,
     scrub_secrets,
 )
-from src.tools import ALL_TOOLS
+from src.escalation import resolve_lead
+from src.tools import ALL_TOOLS, ESCALATION_TOOL_NAME
 
 log = logging.getLogger("hrcc.graph")
 
@@ -254,6 +255,25 @@ async def auditor_node(state: PipelineState) -> dict[str, Any]:
         log.info("Pipeline latency: %.1fms (author=%s)", latency, state.get("author_name", "?"))
 
     return {"final_chunks": chunks, "latency_ms": latency}
+
+
+def extract_escalation_request(state: PipelineState) -> dict[str, str] | None:
+    """Return the first valid escalation the replier asked for, or None.
+
+    The escalation tool only prepares a request; ``bot.py`` turns it into a
+    Confirm Dispatch button so the ambassador decides whether the lead is pinged.
+    """
+    for msg in state.get("messages") or []:
+        if not isinstance(msg, AIMessage):
+            continue
+        for call in getattr(msg, "tool_calls", None) or []:
+            if call.get("name") != ESCALATION_TOOL_NAME:
+                continue
+            args = call.get("args") or {}
+            lead_key = resolve_lead(str(args.get("poc_name", "")), str(args.get("category", "")))
+            if lead_key:
+                return {"lead_key": lead_key, "description": str(args.get("description", ""))}
+    return None
 
 
 def route_after_sentinel(state: PipelineState) -> str:

@@ -179,3 +179,74 @@ async def _relay_reply_to_ambassador(
         await channel.send(msg)  # type: ignore[union-attr]
     except Exception:
         log.exception("Failed to relay reply for ticket %s", ticket["ticket_code"])
+
+
+class ConfirmDispatchView(ui.View):
+    """Confirm/Cancel buttons shown before a chat-initiated escalation reaches a lead."""
+
+    def __init__(
+        self,
+        *,
+        requester_id: int,
+        channel_id: int,
+        message_id: int,
+        lead_key: str,
+        description: str,
+        timeout: float = 900,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.requester_id = requester_id
+        self.channel_id = channel_id
+        self.message_id = message_id
+        self.lead_key = lead_key
+        self.description = description
+        self.message: discord.Message | None = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.requester_id:
+            await interaction.response.send_message(
+                "Only the ambassador who raised this issue can confirm it.", ephemeral=True
+            )
+            return False
+        return True
+
+    def _disable_all(self) -> None:
+        for child in self.children:
+            if isinstance(child, ui.Button):
+                child.disabled = True
+
+    @ui.button(label="Confirm Dispatch", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, button: ui.Button) -> None:
+        from src.escalation import format_outcome, open_escalation
+
+        self._disable_all()
+        button.label = "Dispatched"
+        await interaction.response.edit_message(view=self)
+        self.stop()
+
+        outcome = await open_escalation(
+            client=interaction.client,
+            channel_id=self.channel_id,
+            message_id=self.message_id,
+            author_id=interaction.user.id,
+            author_name=str(interaction.user),
+            lead_key=self.lead_key,
+            description=self.description,
+        )
+        await interaction.followup.send(format_outcome(outcome))
+
+    @ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: ui.Button) -> None:
+        self._disable_all()
+        button.label = "Cancelled"
+        await interaction.response.edit_message(view=self)
+        self.stop()
+        await interaction.followup.send("No ticket sent.", ephemeral=True)
+
+    async def on_timeout(self) -> None:
+        self._disable_all()
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
