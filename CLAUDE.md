@@ -59,7 +59,10 @@ Repository: HackerRank Campus Crew Super Agent (`hrcc_bot`) at `/data/production
   - `src/db.py` — PostgreSQL when `DATABASE_URL` is set, else/fallback SQLite at `data/hrcc.db`. **Always go through `_execute` / `_fetchone` / `_fetchall`** and write SQL with `?` placeholders (auto-translated to `%s` for Postgres) so the dual backend and failover keep working. Add new columns to `_SQLITE_MIGRATIONS` (applied to both backends on startup).
   - `src/vision.py` — ordered endpoint chain vLLM multimodal → NIM vision → Ollama `llava`, plus a deterministic severity classifier (Chakra = P0).
 - **Scheduler (`src/scheduler.py`):** 5-minute contest lifecycle daemon (T-24h / T-1h / T+24h reminders, deduplicated via `_should_send`), weekly digests, compliance nudges.
-- **Escalations:** `src/escalation.py` creates tickets and DMs POCs; `src/escalation_views.py` holds the persistent Acknowledge/Reply/Resolve button views (re-registered on startup).
+- **Escalations:** every ticket path goes through `open_escalation()` in `src/escalation.py` (cooldown/dedup → create ticket → DM the POC). The chat tool `create_escalation_ticket` only *prepares* a request; `bot.py` reads it via `extract_escalation_request()` and attaches a `ConfirmDispatchView`, so nothing reaches a lead until the ambassador clicks. `src/escalation_views.py` also holds the persistent Acknowledge/Reply/Resolve views (re-registered on startup).
+- **Channel modes (`src/channels.py`):** `SUPPORT_CHANNEL_IDS` / `ANNOUNCEMENT_CHANNEL_IDS`; with neither set every channel is proactive (legacy behaviour).
+- **Health (`src/health.py`):** `health_loop` in `bot.py` probes each engine's `/models` (and checks the configured model is listed) and DMs owner + Technical Lead on sustained total outage.
+- **Operational notices:** `/support_broadcast` rows in `support_notices` are prepended to the RAG context by `knowledge.build_context_block()` until they expire.
 - `src/config.py` instantiates `settings = Settings()` at import time and `DISCORD_BOT_TOKEN` is required — any import of `src.*` fails without it set.
 
 ---

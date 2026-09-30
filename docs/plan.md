@@ -219,7 +219,7 @@ The project is structured under `/data/production/hrcc_bot/` with clean role sep
 
 ## 6. Execution Roadmap
 - [x] **Phase 1:** Architectural specification and multi-rubric blueprint (`plan.md`).
-- [ ] **Phase 2:** Core implementation (configuration, knowledge base, prompts, guards, chunker).
-- [ ] **Phase 3:** Bot engine & Discord pipeline (ingress, classifier, vLLM client, dispatcher).
-- [ ] **Phase 4:** Testing & validation suite (test edge cases, classification accuracy, chunking).
-- [ ] **Phase 5:** Deployment to `ai-server`, systemd service migration, and live verification.
+- [x] **Phase 2:** Core implementation (configuration, knowledge base, prompts, guards, chunker).
+- [x] **Phase 3:** Bot engine & Discord pipeline (ingress, classifier, vLLM client, dispatcher).
+- [x] **Phase 4:** Testing & validation suite (test edge cases, classification accuracy, chunking).
+- [x] **Phase 5:** Deployment to `ai-server`, systemd service migration, and live verification.

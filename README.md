@@ -2,7 +2,7 @@
 
 An autonomous, production-grade Discord agent for the **HackerRank Campus Crew** global ambassador program. Built with **LangGraph**, **LangChain**, and **discord.py**, powered by local **vLLM** inference with **HackerRank for Work API** integration.
 
-**44 source files | 8,974 lines | 49 slash commands | 11 database tables | 283 tests | 5-tier RBAC**
+**59 source files | 12,549 lines | 54 slash commands | 12 database tables | 374 tests | 5-tier RBAC**
 
 The agent manages the complete ambassador lifecycle across 60+ countries — onboarding, identity verification, event planning, real-time contest monitoring, automated reward calculation, certificate generation, gamification, cross-border collaboration, and program analytics — while enforcing strict operational boundaries from the official Ambassador Handbook.
 
@@ -12,7 +12,7 @@ The agent manages the complete ambassador lifecycle across 60+ countries — onb
 
 - [Architecture](#architecture)
 - [Authentication & Access Control](#authentication--access-control)
-- [Slash Commands (49)](#slash-commands-49)
+- [Slash Commands (54)](#slash-commands-54)
 - [Autonomous Agent Capabilities](#autonomous-agent-capabilities)
 - [HackerRank for Work API Integration](#hackerrank-for-work-api-integration)
 - [International Gamification System](#international-gamification-system)
@@ -41,7 +41,7 @@ The agent manages the complete ambassador lifecycle across 60+ countries — onb
               ┌────────────┴────────────────┐
               |                              |
        [ Slash Command ]             [ Natural Language ]
-       49 commands with              LangGraph ReAct Pipeline
+       54 commands with              LangGraph ReAct Pipeline
        privacy tiers                         |
        (public/ephemeral/DM)    ┌────────────┴────────────┐
               |                 |                          |
@@ -149,7 +149,7 @@ Ambassador runs /register
 
 ---
 
-## Slash Commands (49)
+## Slash Commands (54)
 
 ### Public Knowledge (no registration required)
 
@@ -180,7 +180,9 @@ Ambassador runs /register
 | `/event_check [url]` | Pre-flight URL validator — Chakra/SkillUp detection, readiness checklist |
 | `/marketing [event] [date] [time] [url]` | Multi-platform promo copy (Discord, WhatsApp, LinkedIn) |
 | `/verify_emails [emails]` | Winner email format check + institutional domain flagging |
-| `/escalate [lead]` | File a P0/P1/P2 ticket with interactive modal |
+| `/escalate [lead]` | File a P0/P1/P2 ticket with interactive modal — DMs the lead; one open ticket per category per 2h (P0 exempt) |
+| `/troubleshoot` | Button-driven fixes for HRW activation, closed contests, reward delays, missing college, live outages — with one-click escalation |
+| `/bulk_verify_emails [csv]` | Bulk-check winner emails in a contest CSV against HRW accounts |
 | `/ticket_status [code]` | Live escalation ticket status lookup |
 | `/request_letter` | Institutional permission letter request → Program Manager |
 | `/request_speaker` | Speaker/judge request with 14-day lead-time enforcement |
@@ -221,6 +223,9 @@ Ambassador runs /register
 | `/admin_tickets` | View all escalation tickets across categories |
 | `/admin_export` | Export full ambassador database as CSV |
 | `/admin_broadcast [message]` | DM announcement to all registered ambassadors |
+| `/support_broadcast [message] [expires_in_days] [dm_ambassadors]` | Post an operational notice to support/announcement channels; the bot uses it in answers until it expires |
+| `/support_notices [remove_id]` | List active operational notices or retire one early |
+| `/send_offer [name] [college] [email]` | Generate (and optionally email) an offer letter PDF — Admin/Moderator |
 | `/ambassador [user]` | Deep profile lookup — HRW link, events, tier, achievements |
 | `/audit [limit]` | Chronological audit log — registrations, points, mod actions, escalations |
 
@@ -263,7 +268,7 @@ When an ambassador uploads a screenshot (PNG/JPG/GIF/WEBP), the bot automaticall
 | **Event Reminders** | T-72h (test link), T-24h (buffer/POC), T+24h (export CSV) — timezone-aware |
 | **Weekly Lead Digest** | Every Sunday — monthly stats, ticket metrics, MTTR |
 | **Monthly Compliance Nudge** | Days 20-25 — DMs inactive ambassadors with action links |
-| **vLLM Health Probe** | Every 60s — keeps GPU KV-cache warm |
+| **Inference Health Probe** | Every 60s — checks each engine serves its configured model, keeps vLLM warm, DMs owner + Technical Lead after 3 failed checks with all engines down (and on recovery) |
 | **Knowledge Hot-Reload** | Every 5min — detects handbook file changes, reloads without restart |
 | **Incident Storm Clustering** | 3+ matching error reports in 2min → single notice instead of flood |
 
@@ -375,6 +380,7 @@ Dual-backend: **PostgreSQL** (production) with **SQLite WAL** (fallback). Auto-m
 | `moderators` | Moderator role grants with grantor tracking |
 | `event_showcase` | Ambassador event highlights for community feed |
 | `audit_log` | Full chronological trail — who did what, when, to whom |
+| `support_notices` | Lead-issued operational notices injected into answers until expiry |
 
 ---
 
@@ -421,13 +427,20 @@ hrcc_bot/
 │   ├── escalation_views.py             # Interactive buttons (Acknowledge/Reply/Resolve modals)
 │   ├── incident_cluster.py             # Error storm deduplication engine
 │   ├── scheduler.py                    # Reminders, weekly digest, compliance nudges
-│   ├── slash_commands.py               # 49 slash commands across 5 role tiers
+│   ├── health.py                       # Per-engine inference probes + outage alerting
+│   ├── channels.py                     # Per-channel reply modes (proactive / mention-only / broadcast-only)
+│   ├── troubleshoot.py                 # /troubleshoot decision trees
+│   ├── letter_service.py               # Permission/offer letter PDF generation
+│   ├── letter_views.py                 # Letter approval buttons for leads
+│   ├── verify_emails.py                # Bulk winner email verification against HRW
+│   ├── audit_log.py                    # Audit log queries, search, CSV export
+│   ├── slash_commands.py               # 54 slash commands across 5 role tiers
 │   └── prompts/
 │       ├── template_manager.py         # Jinja2 template engine (singleton)
 │       └── templates/                  # 7 .jinja prompt files
 │
 ├── references/                         # Official handbook, SOPs, templates, FAQs (4 docs)
-├── tests/                              # 283 tests across 14 test files
+├── tests/                              # 374 tests across 22 test files
 ├── deploy/
 │   ├── deploy.sh                       # Automated pull → install → test → restart
 │   ├── hrcc-bot.service                # Systemd service unit
@@ -477,6 +490,9 @@ sudo systemctl enable --now hrcc-bot
 | `POC_DISCORD_SREESANTH` | Technical Lead Discord ID |
 | `POC_DISCORD_NITISH` | Design Lead Discord ID |
 | `DATABASE_URL` | PostgreSQL connection string (empty = SQLite fallback) |
+| `SUPPORT_CHANNEL_IDS` | Optional. Comma-separated channels that answer without a mention; once set, all other channels are mention-only |
+| `ANNOUNCEMENT_CHANNEL_IDS` | Optional. Comma-separated channels where the bot ignores chat |
+| `HEALTH_ALERT_THRESHOLD` | Consecutive all-engines-down checks before alerting (default 3) |
 
 ---
 
@@ -495,5 +511,5 @@ sudo systemctl enable --now hrcc-bot
 | **Configuration** | Pydantic Settings v2 with .env |
 | **Knowledge Base** | YAML + 4 Markdown docs with keyword-scored retrieval |
 | **Spreadsheet Parsing** | csv + openpyxl (CSV and XLSX) |
-| **Testing** | pytest — 283 tests across 14 files |
+| **Testing** | pytest — 374 tests across 22 files |
 | **Deployment** | systemd + bash deploy script |
