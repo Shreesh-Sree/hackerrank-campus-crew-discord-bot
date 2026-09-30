@@ -9,6 +9,7 @@ from discord import app_commands, ui
 
 import re
 
+from src.channels import announcement_channel_ids, support_channel_ids
 from src.config import settings
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
 from datetime import datetime, timezone
@@ -19,6 +20,9 @@ import os
 from src.auth_gate import Role, get_user_role
 from src.db import (
     ACHIEVEMENT_DEFS,
+    add_support_notice,
+    deactivate_support_notice,
+    get_active_support_notices,
     REGIONS,
     TIER_BADGES,
     add_moderator,
@@ -352,6 +356,21 @@ def _ticket_status_embed(ticket_code: str) -> discord.Embed:
 
 
 # ── Register all commands ─────────────────────────────────────────────────
+
+
+async def _dm_all_ambassadors(client: discord.Client, text: str) -> tuple[int, int]:
+    """DM every HRW-linked ambassador; returns (delivered, total)."""
+    from src.db import _fetchall
+    links = _fetchall("SELECT discord_id FROM hrw_links")
+    sent = 0
+    for link in links:
+        try:
+            user = await client.fetch_user(link["discord_id"])
+            await user.send(text)
+            sent += 1
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+    return sent, len(links)
 
 
 def register_commands(tree: app_commands.CommandTree) -> None:
@@ -1952,17 +1971,107 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             return
 
         await interaction.response.defer(ephemeral=True)
-        from src.db import _fetchall
-        links = _fetchall("SELECT discord_id FROM hrw_links")
-        sent = 0
-        for link in links:
+        sent, total = await _dm_all_ambassadors(
+            interaction.client, f"**Announcement from HackerRank Campus Crew:**\n\n{message}"
+        )
+        await interaction.followup.send(f"Broadcast sent to {sent}/{total} ambassadors.", ephemeral=True)
+
+    # ── /support_broadcast ────────────────────────────────────────────────
+
+    @tree.command(
+        name="support_broadcast",
+        description="[Admin] Post an operational notice to support channels and teach it to the bot",
+    )
+    @app_commands.describe(
+        message="The notice, e.g. 'HRW maintenance Sunday 02:00-04:00 IST'",
+        expires_in_days="How long the bot should keep using this notice in answers (default 7)",
+        dm_ambassadors="Also DM every registered ambassador",
+    )
+    async def support_broadcast_cmd(
+        interaction: discord.Interaction,
+        message: str,
+        expires_in_days: app_commands.Range[int, 1, 90] = 7,
+        dm_ambassadors: bool = False,
+    ) -> None:
+        if get_user_role(interaction.user.id) < Role.ADMIN:
+            await interaction.response.send_message("Admin access required.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        notice = add_support_notice(
+            message=message,
+            author_id=interaction.user.id,
+            author_name=str(interaction.user),
+            expires_in_days=expires_in_days,
+        )
+
+        embed = discord.Embed(
+            title="Campus Crew Operational Notice",
+            description=message,
+            color=discord.Color.gold(),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.set_footer(text=f"Posted by {interaction.user.display_name}")
+
+        channel_ids = announcement_channel_ids() | support_channel_ids()
+        if not channel_ids and settings.discord_home_channel:
+            channel_ids = {settings.discord_home_channel}
+        posted = 0
+        for channel_id in channel_ids:
             try:
-                user = await interaction.client.fetch_user(link["discord_id"])
-                await user.send(f"**Announcement from HackerRank Campus Crew:**\n\n{message}")
-                sent += 1
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-        await interaction.followup.send(f"Broadcast sent to {sent}/{len(links)} ambassadors.", ephemeral=True)
+                channel = interaction.client.get_channel(channel_id) or await interaction.client.fetch_channel(channel_id)
+                await channel.send(embed=embed)  # type: ignore[union-attr]
+                posted += 1
+            except (discord.HTTPException, AttributeError):
+                log.warning("Could not post support notice to channel %s", channel_id)
+
+        dm_summary = ""
+        if dm_ambassadors:
+            sent, total = await _dm_all_ambassadors(
+                interaction.client, f"**Campus Crew Operational Notice:**\n\n{message}"
+            )
+            dm_summary = f" DMed {sent}/{total} ambassadors."
+
+        log_audit(
+            actor_id=interaction.user.id, actor_name=str(interaction.user),
+            action="SUPPORT_BROADCAST",
+            details=f"notice #{notice['id'] if notice else '?'} ({expires_in_days}d): {message[:200]}",
+        )
+        await interaction.followup.send(
+            f"Notice #{notice['id'] if notice else '?'} posted to {posted}/{len(channel_ids)} channel(s).{dm_summary} "
+            f"The bot will use it in answers for {expires_in_days} day(s). Remove it early with `/support_notices`.",
+            ephemeral=True,
+        )
+
+    @tree.command(name="support_notices", description="[Admin] List active operational notices, or remove one")
+    @app_commands.describe(remove_id="ID of a notice to stop using in answers")
+    async def support_notices_cmd(interaction: discord.Interaction, remove_id: int | None = None) -> None:
+        if get_user_role(interaction.user.id) < Role.ADMIN:
+            await interaction.response.send_message("Admin access required.", ephemeral=True)
+            return
+
+        if remove_id is not None:
+            removed = deactivate_support_notice(remove_id)
+            if removed:
+                log_audit(
+                    actor_id=interaction.user.id, actor_name=str(interaction.user),
+                    action="SUPPORT_NOTICE_REMOVED", details=f"notice #{remove_id}",
+                )
+            await interaction.response.send_message(
+                f"Notice #{remove_id} removed." if removed else f"No active notice #{remove_id}.",
+                ephemeral=True,
+            )
+            return
+
+        notices = get_active_support_notices()
+        if not notices:
+            await interaction.response.send_message("No active notices.", ephemeral=True)
+            return
+        lines = [
+            f"**#{n['id']}** (until {n['expires_at'][:10]}, by {n['author_name']}): {n['message'][:180]}"
+            for n in notices
+        ]
+        await interaction.response.send_message("\n".join(lines)[:1900], ephemeral=True)
 
     # ══════════════════════════════════════════════════════════════════════
     # OWNER COMMANDS

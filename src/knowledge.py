@@ -181,9 +181,25 @@ def get_certificate_info() -> dict[str, Any]:
     return kb.get("certificates", {})
 
 
+def _support_notice_section() -> str:
+    from src.db import get_active_support_notices
+
+    notices = get_active_support_notices()
+    if not notices:
+        return ""
+    lines = ["## ACTIVE OPERATIONAL NOTICES (issued by program leads; these override the handbook)"]
+    for n in notices:
+        lines.append(f"- [{n['created_at'][:10]}] {n['message']}")
+    return "\n".join(lines) + "\n"
+
+
 def build_context_block(query: str = "") -> str:
     kb = load_knowledge()
     sections: list[str] = []
+
+    notices = _support_notice_section()
+    if notices:
+        sections.append(notices)
 
     for key in ("hrw", "hrc", "skillup"):
         plat = kb.get("platforms", {}).get(key, {})

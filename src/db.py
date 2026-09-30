@@ -333,6 +333,16 @@ _SQLITE_SCHEMA = """
         ON audit_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_audit_actor
         ON audit_log(actor_id);
+
+    CREATE TABLE IF NOT EXISTS support_notices (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        message         TEXT    NOT NULL,
+        author_id       INTEGER NOT NULL,
+        author_name     TEXT    NOT NULL,
+        active          INTEGER NOT NULL DEFAULT 1,
+        created_at      TEXT    NOT NULL,
+        expires_at      TEXT    NOT NULL
+    );
 """
 
 _PG_SCHEMA = """
@@ -492,6 +502,16 @@ _PG_SCHEMA = """
         ON audit_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_audit_actor
         ON audit_log(actor_id);
+
+    CREATE TABLE IF NOT EXISTS support_notices (
+        id              SERIAL PRIMARY KEY,
+        message         TEXT    NOT NULL,
+        author_id       BIGINT  NOT NULL,
+        author_name     TEXT    NOT NULL,
+        active          INTEGER NOT NULL DEFAULT 1,
+        created_at      TEXT    NOT NULL,
+        expires_at      TEXT    NOT NULL
+    );
 """
 
 
@@ -1266,3 +1286,37 @@ def close_db() -> None:
         except Exception:
             pass
         _local.pg_conn = None
+
+
+# ── Support notices (/support_broadcast) ─────────────────────────────────
+
+
+def add_support_notice(
+    *, message: str, author_id: int, author_name: str, expires_in_days: int = 7
+) -> dict[str, Any] | None:
+    created = _now_iso()
+    expires = (datetime.now(timezone.utc) + timedelta(days=expires_in_days)).isoformat()
+    _execute(
+        """INSERT INTO support_notices (message, author_id, author_name, active, created_at, expires_at)
+           VALUES (?, ?, ?, 1, ?, ?)""",
+        (message, author_id, author_name, created, expires),
+    )
+    return _fetchone(
+        "SELECT * FROM support_notices WHERE author_id=? AND created_at=? ORDER BY id DESC LIMIT 1",
+        (author_id, created),
+    )
+
+
+def get_active_support_notices() -> list[dict[str, Any]]:
+    return _fetchall(
+        "SELECT * FROM support_notices WHERE active=1 AND expires_at > ? ORDER BY created_at DESC",
+        (_now_iso(),),
+    )
+
+
+def deactivate_support_notice(notice_id: int) -> bool:
+    row = _fetchone("SELECT id FROM support_notices WHERE id=? AND active=1", (notice_id,))
+    if not row:
+        return False
+    _execute("UPDATE support_notices SET active=0 WHERE id=?", (notice_id,))
+    return True

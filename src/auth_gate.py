@@ -81,6 +81,7 @@ PRIVACY_EPHEMERAL = {
     "admin_revoke", "admin_export", "admin_tickets", "mod_lookup",
     "mod_tickets", "mod_activity", "mod_verify", "owner_api_status",
     "owner_config", "owner_sync_users", "link_hrw",
+    "support_broadcast", "support_notices",
 }
 
 
