@@ -2,7 +2,7 @@
 
 An autonomous, production-grade Discord agent for the **HackerRank Campus Crew** global ambassador program. Built with **LangGraph**, **LangChain**, and **discord.py**, powered by local **vLLM** inference with **HackerRank for Work API** integration.
 
-**59 source files | 12,549 lines | 54 slash commands | 12 database tables | 374 tests | 5-tier RBAC**
+**59 source files | 12,549 lines | 56 slash commands | 12 database tables | 374 tests | 5-tier RBAC**
 
 The agent manages the complete ambassador lifecycle across 60+ countries — onboarding, identity verification, event planning, real-time contest monitoring, automated reward calculation, certificate generation, gamification, cross-border collaboration, and program analytics — while enforcing strict operational boundaries from the official Ambassador Handbook.
 
@@ -12,7 +12,7 @@ The agent manages the complete ambassador lifecycle across 60+ countries — onb
 
 - [Architecture](#architecture)
 - [Authentication & Access Control](#authentication--access-control)
-- [Slash Commands (54)](#slash-commands-54)
+- [Slash Commands (56)](#slash-commands-56)
 - [Autonomous Agent Capabilities](#autonomous-agent-capabilities)
 - [HackerRank for Work API Integration](#hackerrank-for-work-api-integration)
 - [International Gamification System](#international-gamification-system)
@@ -41,7 +41,7 @@ The agent manages the complete ambassador lifecycle across 60+ countries — onb
               ┌────────────┴────────────────┐
               |                              |
        [ Slash Command ]             [ Natural Language ]
-       54 commands with              LangGraph ReAct Pipeline
+       56 commands with              LangGraph ReAct Pipeline
        privacy tiers                         |
        (public/ephemeral/DM)    ┌────────────┴────────────┐
               |                 |                          |
@@ -149,7 +149,7 @@ Ambassador runs /register
 
 ---
 
-## Slash Commands (54)
+## Slash Commands (56)
 
 ### Public Knowledge (no registration required)
 
@@ -181,6 +181,7 @@ Ambassador runs /register
 | `/marketing [event] [date] [time] [url]` | Multi-platform promo copy (Discord, WhatsApp, LinkedIn) |
 | `/verify_emails [emails]` | Winner email format check + institutional domain flagging |
 | `/escalate [lead]` | File a P0/P1/P2 ticket with interactive modal — DMs the lead; one open ticket per category per 2h (P0 exempt) |
+| `/my_data [export \| delete]` | Download a JSON copy of, or permanently delete, everything the bot stores about you (no registration needed) |
 | `/troubleshoot` | Button-driven fixes for HRW activation, closed contests, reward delays, missing college, live outages — with one-click escalation |
 | `/bulk_verify_emails [csv]` | Bulk-check winner emails in a contest CSV against HRW accounts |
 | `/ticket_status [code]` | Live escalation ticket status lookup |
@@ -224,6 +225,7 @@ Ambassador runs /register
 | `/admin_export` | Export full ambassador database as CSV |
 | `/admin_broadcast [message]` | DM announcement to all registered ambassadors |
 | `/support_broadcast [message] [expires_in_days] [dm_ambassadors]` | Post an operational notice to support/announcement channels; the bot uses it in answers until it expires |
+| `/admin_delete_user [user]` | Delete all stored data for a user (privacy request); audit entries anonymised |
 | `/support_notices [remove_id]` | List active operational notices or retire one early |
 | `/send_offer [name] [college] [email]` | Generate (and optionally email) an offer letter PDF — Admin/Moderator |
 | `/ambassador [user]` | Deep profile lookup — HRW link, events, tier, achievements |
@@ -432,7 +434,7 @@ hrcc_bot/
 │   │   ├── verify_emails.py            # Bulk winner email verification against HRW
 │   │   └── scheduler.py                # Reminders, weekly digest, compliance nudges
 │   └── bot/                            # Discord surface
-│       ├── commands.py                 # 54 slash commands across 5 role tiers
+│       ├── commands.py                 # 56 slash commands across 5 role tiers
 │       ├── auth_gate.py                # 5-tier RBAC — role resolver, @require_role, gate check
 │       ├── channels.py                 # Per-channel reply modes
 │       ├── escalation_views.py         # Confirm Dispatch + Acknowledge/Reply/Resolve buttons
@@ -501,6 +503,7 @@ sudo systemctl enable --now hrcc-bot
 | `ALLOW_ALL_USERS` | `true` = unregistered users may use ambassador commands (rollout mode); `false` = `/register` required. Admin/lead commands are always role-checked |
 | `SUPPORT_CHANNEL_IDS` | Optional. Comma-separated channels that answer without a mention; once set, all other channels are mention-only |
 | `ANNOUNCEMENT_CHANNEL_IDS` | Optional. Comma-separated channels where the bot ignores chat |
+| `RECORD_RETENTION_DAYS` / `CONVERSATION_RETENTION_DAYS` | Daily purge windows for tickets/events (default 365) and chat history (default 30) |
 | `HEALTH_ALERT_THRESHOLD` | Consecutive all-engines-down checks before alerting (default 3) |
 
 ---

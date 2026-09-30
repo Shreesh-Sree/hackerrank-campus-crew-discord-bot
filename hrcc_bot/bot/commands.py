@@ -58,6 +58,7 @@ from hrcc_bot.core.db import (
     upsert_ambassador_profile,
 )
 from hrcc_bot.services.escalation import _get_poc_id, _send_poc_dm, format_outcome, open_escalation
+from hrcc_bot.bot.privacy_views import ConfirmDeleteView, build_export_file
 from hrcc_bot.bot.troubleshoot import NODES, TroubleshootView, build_embed as build_troubleshoot_embed
 from hrcc_bot.services.hrw_api import get_questions_by_test, verify_test_ownership
 from hrcc_bot.services.verify_emails import (
@@ -560,6 +561,32 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             )
         else:
             await interaction.response.send_message("Could not update your stage.", ephemeral=True)
+
+    # ── /my_data (privacy: access + deletion) ─────────────────────────────
+
+    @tree.command(name="my_data", description="Download or delete the data the bot stores about you")
+    @app_commands.describe(action="Export a copy, or permanently delete it")
+    @app_commands.choices(action=[
+        app_commands.Choice(name="Export (download a JSON copy)", value="export"),
+        app_commands.Choice(name="Delete (permanent)", value="delete"),
+    ])
+    async def my_data_cmd(interaction: discord.Interaction, action: app_commands.Choice[str]) -> None:
+        if action.value == "export":
+            await interaction.response.defer(ephemeral=True)
+            file, rows = build_export_file(interaction.user.id)
+            if file is None:
+                await interaction.followup.send("The bot has no stored data about you.", ephemeral=True)
+                return
+            await interaction.followup.send(f"Here is everything stored about you ({rows} records).", file=file, ephemeral=True)
+            return
+
+        view = ConfirmDeleteView(requester_id=interaction.user.id, subject_id=interaction.user.id, subject_label="you")
+        await interaction.response.send_message(
+            "This permanently deletes your tickets, events, points, profile, HRW link and chat history. "
+            "Audit entries are kept but anonymised. **This cannot be undone.**",
+            view=view,
+            ephemeral=True,
+        )
 
     # ── /troubleshoot ─────────────────────────────────────────────────────
 
@@ -2086,6 +2113,19 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             for n in notices
         ]
         await interaction.response.send_message("\n".join(lines)[:1900], ephemeral=True)
+
+    @tree.command(name="admin_delete_user", description="[Admin] Delete all stored data for a user (privacy request)")
+    @app_commands.describe(user="The user whose data should be deleted")
+    async def admin_delete_user_cmd(interaction: discord.Interaction, user: discord.User) -> None:
+        if get_user_role(interaction.user.id) < Role.ADMIN:
+            await interaction.response.send_message("Admin access required.", ephemeral=True)
+            return
+        view = ConfirmDeleteView(requester_id=interaction.user.id, subject_id=user.id, subject_label=str(user))
+        await interaction.response.send_message(
+            f"Permanently delete all stored data for **{user}** (`{user.id}`)? This cannot be undone.",
+            view=view,
+            ephemeral=True,
+        )
 
     # ══════════════════════════════════════════════════════════════════════
     # OWNER COMMANDS

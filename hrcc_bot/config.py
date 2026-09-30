@@ -86,5 +86,9 @@ class Settings(BaseSettings):
     max_conversation_turns: int = 8
     db_path: str = "data/hrcc.db"
 
+    # Retention (docs/legal/PRIVACY_POLICY.md §4)
+    record_retention_days: int = 365
+    conversation_retention_days: int = 30
+
 
 settings = Settings()  # type: ignore[call-arg]

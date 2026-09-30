@@ -69,7 +69,7 @@ ROLE_LABELS = {
 
 UNGATED_COMMANDS = {
     "register", "rules", "sop", "resources", "rewards",
-    "onboard", "certs", "question_bank",
+    "onboard", "certs", "question_bank", "my_data",
 }
 
 PRIVACY_EPHEMERAL = {
@@ -82,6 +82,7 @@ PRIVACY_EPHEMERAL = {
     "mod_tickets", "mod_activity", "mod_verify", "owner_api_status",
     "owner_config", "owner_sync_users", "link_hrw",
     "support_broadcast", "support_notices", "troubleshoot",
+    "my_data", "admin_delete_user",
 }
 
 

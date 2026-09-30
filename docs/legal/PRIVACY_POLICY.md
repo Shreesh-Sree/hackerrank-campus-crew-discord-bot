@@ -44,8 +44,8 @@ We use the collected information strictly to provide operational campus event su
 - **Inference Security:** Message queries processed through our AI engine run on a private, self-hosted infrastructure (`ai-server`) and are **never** shared with third-party public AI providers for model training.
 - **Secret & Token Scrubbing:** The Bot employs automated regex filters to redact API keys, tokens, and credentials from all logs and responses.
 - **Retention Period:**
-  - Active conversation context is retained for the duration of the support thread.
-  - Event records and escalation ticket histories are retained for up to twelve (12) months for reward auditability and compliance, after which they are permanently archived or deleted.
+  - Conversation history is retained for thirty (30) days, then automatically deleted.
+  - Event records and escalation ticket histories are retained for up to twelve (12) months for reward auditability and compliance, after which they are automatically and permanently deleted by a daily retention job.
 
 ---
 
@@ -62,7 +62,7 @@ Under applicable data protection laws (including GDPR and CCPA principles), you 
 2. **Rectification:** Request correction of inaccurate event records or college affiliations.
 3. **Deletion (Right to be Forgotten):** Request the deletion of your user data, conversation turns, and event records from our database.
 
-To request data access or deletion, use the `/my_status` command or email **Sreesanth R** directly at:  
+To download or delete your data yourself, use the `/my_data` command (available to everyone, registered or not). You can also email **Sreesanth R** directly at:  
 📧 **`shreesh.exe22@gmail.com`**  
 *(Please include your Discord Username and 18-digit User ID for verification).*
 

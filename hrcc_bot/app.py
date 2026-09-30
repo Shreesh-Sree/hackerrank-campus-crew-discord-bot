@@ -19,6 +19,7 @@ from hrcc_bot.services.cert_generator import build_cert_preview_file
 from hrcc_bot.services.csv_validator import build_canva_file, build_event_report, build_summary_embed, parse_contest_csv
 from hrcc_bot.core.db import ACHIEVEMENT_DEFS, award_points, check_and_grant_achievements, close_db, init_db, log_audit, record_event_submission
 from hrcc_bot.bot.escalation_views import ConfirmDispatchView, PersistentTicketView
+from hrcc_bot.core.privacy import purge_expired
 from hrcc_bot.core.health import EngineProbe, HealthMonitor, format_alert, probe_engine
 from hrcc_bot.pipeline.graph import PipelineState, extract_escalation_request, get_pipeline
 from hrcc_bot.pipeline.incident_cluster import incident_engine
@@ -78,6 +79,8 @@ async def on_ready() -> None:
         health_loop.start()
     if not knowledge_reload_loop.is_running():
         knowledge_reload_loop.start()
+    if not retention_loop.is_running():
+        retention_loop.start()
 
     await setup_scheduler(bot)
 
@@ -146,6 +149,19 @@ async def health_loop() -> None:
 
 @health_loop.before_loop
 async def _wait_for_bot() -> None:
+    await bot.wait_until_ready()
+
+
+@tasks.loop(hours=24)
+async def retention_loop() -> None:
+    try:
+        purge_expired(settings.record_retention_days, settings.conversation_retention_days)
+    except Exception:
+        log.exception("Retention purge failed")
+
+
+@retention_loop.before_loop
+async def _wait_for_bot_retention() -> None:
     await bot.wait_until_ready()
 
 
@@ -456,6 +472,7 @@ async def _shutdown(sig: signal.Signals) -> None:
     log.info("Received %s, shutting down...", sig.name)
     health_loop.cancel()
     knowledge_reload_loop.cancel()
+    retention_loop.cancel()
     close_db()
     await bot.close()
 
@@ -479,6 +496,7 @@ def main() -> None:
     finally:
         health_loop.cancel()
         knowledge_reload_loop.cancel()
+        retention_loop.cancel()
         close_db()
         if not bot.is_closed():
             loop.run_until_complete(bot.close())
