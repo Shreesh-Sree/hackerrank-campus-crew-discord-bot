@@ -58,6 +58,7 @@ from src.db import (
     upsert_ambassador_profile,
 )
 from src.escalation import _get_poc_id, _send_poc_dm, format_outcome, open_escalation
+from src.troubleshoot import NODES, TroubleshootView, build_embed as build_troubleshoot_embed
 from src.hrw_api import get_questions_by_test, verify_test_ownership
 from src.verify_emails import (
     EmailVerifier,
@@ -553,6 +554,13 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             )
         else:
             await interaction.response.send_message("Could not update your stage.", ephemeral=True)
+
+    # ── /troubleshoot ─────────────────────────────────────────────────────
+
+    @tree.command(name="troubleshoot", description="Step-by-step fixes for common HRW/HRC issues, with one-click escalation")
+    async def troubleshoot_cmd(interaction: discord.Interaction) -> None:
+        view = TroubleshootView(requester_id=interaction.user.id)
+        await interaction.response.send_message(embed=build_troubleshoot_embed(NODES["root"]), view=view, ephemeral=True)
 
     # ── /escalate ─────────────────────────────────────────────────────────
 
