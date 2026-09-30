@@ -12,6 +12,9 @@ import re
 from src.config import settings
 from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
 from datetime import datetime, timezone
+from src.letter_service import generate_permission_letter_pdf, generate_offer_letter_pdf
+from src.letter_views import LetterApprovalView
+import os
 
 from src.auth_gate import Role, get_user_role
 from src.db import (
@@ -51,6 +54,18 @@ from src.db import (
     upsert_ambassador_profile,
 )
 from src.escalation import CATEGORY_MAP, POC_DISPLAY, _classify_urgency, _get_poc_id
+from src.hrw_api import get_questions_by_test, verify_test_ownership
+from src.verify_emails import (
+    EmailVerifier,
+    generate_verification_report,
+    run_full_verification,
+)
+from src.audit_log import (
+    export_audit_logs_to_csv,
+    get_audit_log_summary,
+    get_ticket_audit_trail,
+    search_audit_logs,
+)
 
 log = logging.getLogger("hrcc.commands")
 
@@ -811,15 +826,70 @@ def register_commands(tree: app_commands.CommandTree) -> None:
                 author_name=str(interaction.user),
                 category=category,
                 urgency=urgency,
-                poc_name="sanskruti",
-                poc_id=_get_poc_id("sanskruti"),
+                poc_name="sreesanth",
+                poc_id=_get_poc_id("sreesanth") or _get_poc_id("sanskruti"),
                 description=desc,
             )
+
+            # Generate preview PDF draft
+            pdf_path = f"/tmp/{ticket['ticket_code']}_permission_letter.pdf"
+            generate_permission_letter_pdf(
+                ambassador_name=self.ambassador_name.value.strip(),
+                college_name=self.college_name.value.strip(),
+                event_name=self.event_name.value.strip(),
+                event_date=self.event_date.value.strip(),
+                output_pdf=pdf_path,
+            )
+
+            # 1. Inform student that the letter is created and submitted for approval
             await interaction.response.send_message(
-                f"Letter request **{ticket['ticket_code']}** submitted to **Sanskruti (Program Manager)**. "
-                f"Please allow 7 business days for processing.",
+                f"📄 Permission Letter draft **{ticket['ticket_code']}** has been generated!\n"
+                f"Your request has been forwarded to the **Program Administrators / Leads** for review and approval.\n"
+                f"Once approved, your official signed letter will be dispatched to you directly here.",
                 ephemeral=True,
             )
+
+            # 2. Dispatch approval card + PDF to Home Support Channel or Lead POC
+            details = {
+                "ambassador_name": self.ambassador_name.value.strip(),
+                "college_name": self.college_name.value.strip(),
+                "event_name": self.event_name.value.strip(),
+                "event_date": self.event_date.value.strip(),
+                "author_id": interaction.user.id,
+                "channel_id": interaction.channel_id,
+            }
+
+            approval_embed = discord.Embed(
+                title=f"📋 New Permission Letter Request — {ticket['ticket_code']}",
+                description=(
+                    f"**Ambassador:** {self.ambassador_name.value} (<@{interaction.user.id}>)\n"
+                    f"**College:** {self.college_name.value}\n"
+                    f"**Event:** {self.event_name.value}\n"
+                    f"**Event Date:** {self.event_date.value}\n"
+                    f"**Notes:** {self.additional_info.value or 'None'}\n\n"
+                    f"*Review the attached draft PDF below. You can approve, edit details, or reject this request.*"
+                ),
+                color=discord.Color.blue(),
+            )
+            approval_view = LetterApprovalView(ticket["ticket_code"], details)
+            file = discord.File(pdf_path, filename=f"Draft_{ticket['ticket_code']}_Permission_Letter.pdf")
+
+            # Send to home channel or dispatch to POC DM
+            target_channel = None
+            if settings.discord_home_channel:
+                target_channel = interaction.client.get_channel(settings.discord_home_channel)
+                if not target_channel:
+                    try:
+                        target_channel = await interaction.client.fetch_channel(settings.discord_home_channel)
+                    except Exception:
+                        pass
+
+            if target_channel:
+                await target_channel.send(embed=approval_embed, file=file, view=approval_view)
+            else:
+                # Fallback to current channel
+                if interaction.channel:
+                    await interaction.channel.send(embed=approval_embed, file=file, view=approval_view)
 
     @tree.command(name="request_letter", description="Request an institutional permission letter from HackerRank")
     async def request_letter_cmd(interaction: discord.Interaction) -> None:
@@ -2360,33 +2430,199 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ══════════════════════════════════════════════════════════════════════
-    # AUDIT LOG
+    # AUDIT LOG & EMAIL VERIFICATION
     # ══════════════════════════════════════════════════════════════════════
 
     @tree.command(name="audit", description="[Admin] View the system audit log")
-    @app_commands.describe(limit="Number of entries to show (default 20)")
-    async def audit_cmd(interaction: discord.Interaction, limit: int = 20) -> None:
+    @app_commands.describe(
+        actor_id="Filter by ambassador ID (optional)",
+        action="Filter by action type (optional)",
+        category="Filter by category: OPS, TECH, DESIGN (optional)",
+        limit="Number of entries to show (default 20)",
+    )
+    async def audit_cmd(
+        interaction: discord.Interaction,
+        actor_id: int | None = None,
+        action: str | None = None,
+        category: str | None = None,
+        limit: int = 20,
+    ) -> None:
         role = get_user_role(interaction.user.id)
         if role < Role.ADMIN:
             await interaction.response.send_message("Admin access required.", ephemeral=True)
             return
 
-        entries = get_audit_log(limit=min(limit, 50))
-        if not entries:
-            await interaction.response.send_message("No audit log entries yet.", ephemeral=True)
+        logs = search_audit_logs(
+            query_text="",
+            actor_id=actor_id,
+            action=action,
+            category=category,
+            limit=min(limit, 100),
+        )
+
+        if not logs:
+            await interaction.response.send_message("No matching entries found.", ephemeral=True)
             return
 
         embed = discord.Embed(title="Audit Log", color=discord.Color.dark_grey())
 
-        for e in entries[:15]:
+        for e in logs[:25]:
             ts = e["created_at"][:16].replace("T", " ")
-            target = f" -> {e['target_name']}" if e.get("target_name") else ""
-            details = f"\n{e['details'][:80]}" if e.get("details") else ""
+            actor = f"**{e['actor_name']}** (ID: {e['actor_id']})" if e.get("actor_name") else "Unknown"
+            action_str = e.get("action", "N/A") or "N/A"
+            urgency = e.get("urgency", "N/A") or "N/A"
+            desc = e.get("description", "")[:100] or ""
+            value = f"{actor} — `{action_str}` [{urgency}]\n{desc}" if desc else f"{actor} — `{action_str}` [{urgency}]"
+
+            embed.add_field(name=f"{ts}", value=value, inline=False)
+
+        embed.set_footer(text=f"Showing {min(len(logs), 25)} of {len(logs)} entries")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @tree.command(name="bulk_verify_emails", description="Bulk verify winner emails against HRW accounts")
+    @app_commands.describe(
+        csv_file="Contest CSV file with participant emails",
+        event_name="Name of the event (for context)",
+    )
+    async def bulk_verify_emails_cmd(interaction: discord.Interaction, csv_file: discord.Attachment, event_name: str = "Event") -> None:
+        await interaction.response.defer(thinking=True)
+
+        try:
+            raw = await csv_file.read()
+            result = await run_full_verification(raw, event_name)
+
+            embed = discord.Embed(title="Email Verification Results", color=discord.Color.green())
             embed.add_field(
-                name=f"{ts} | {e['action']}",
-                value=f"**{e['actor_name']}**{target}{details}",
+                name="Summary",
+                value=(
+                    f"**Event:** {event_name}\n"
+                    f"**Total Emails:** {result['total_participants']}\n"
+                    f"**Valid (HRW Match):** {result['valid_emails']}\n"
+                    f"**Invalid/Mismatched:** {result['invalid_emails']}\n\n"
+                    f"**Can Submit to Sanskruti:** {'✅ YES' if result['can_submit_to_sanskruti'] else '❌ NO — Fix mismatches first'}"
+                ),
                 inline=False,
             )
 
-        embed.set_footer(text=f"Showing {min(len(entries), 15)} of {len(entries)} entries")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+            if result['warnings']:
+                embed.add_field(
+                    name="⚠️ Issues Found",
+                    value="\n".join(f"- {w[:200]}" for w in result['warnings'][:10]),
+                    inline=False,
+                )
+                if len(result['warnings']) > 10:
+                    embed.add_field(
+                        name="...",
+                        value=f"...and {len(result['warnings']) - 10} more warnings",
+                        inline=True,
+                    )
+
+            embed.set_footer(text="Do NOT submit mismatched emails — they will cause reward failures!")
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            log.exception("Email verification failed")
+            await interaction.followup.send(
+                f"Failed to verify emails: {str(e)[:200]}", ephemeral=True
+            )
+
+    # ══════════════════════════════════════════════════════════════════════
+    # OFFER LETTER ISSUANCE (ADMIN / LEAD)
+    # ══════════════════════════════════════════════════════════════════════
+
+    @tree.command(name="send_offer", description="Generate and email official HackerRank Campus Crew Offer Letter")
+    @app_commands.describe(
+        name="Student's Full Name",
+        college="College / University Name",
+        email="Student's Email Address",
+        send_email="Actually send email via Stalwart Mail Server (default: False for preview)",
+    )
+    async def send_offer_cmd(
+        interaction: discord.Interaction,
+        name: str,
+        college: str,
+        email: str,
+        send_email: bool = False,
+    ) -> None:
+        role = get_user_role(interaction.user.id)
+        if role not in (Role.OWNER, Role.ADMIN, Role.MODERATOR):
+            await interaction.response.send_message(
+                "❌ You do not have permission to issue offer letters. (Requires Admin or Moderator)",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        pdf_path = f"/tmp/HackerRank_Campus_Crew_Offer_Letter_{name.replace(' ', '_')}.pdf"
+        try:
+            generate_offer_letter_pdf(
+                name=name.strip(),
+                college=college.strip(),
+                output_pdf=pdf_path,
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to generate PDF offer letter: {e}", ephemeral=True)
+            return
+
+        file = discord.File(pdf_path, filename=os.path.basename(pdf_path))
+
+        if not send_email:
+            # Preview mode
+            embed = discord.Embed(
+                title="📄 Offer Letter Generated (Preview Mode)",
+                description=(
+                    f"**Recipient:** {name}\n"
+                    f"**College:** {college}\n"
+                    f"**Email:** {email}\n\n"
+                    f"💡 *The letter PDF is attached below for your review.* "
+                    f"To actually dispatch the email via Stalwart, set `send_email: True`."
+                ),
+                color=discord.Color.green(),
+            )
+            await interaction.followup.send(embed=embed, file=file, ephemeral=True)
+        else:
+            # Dispatch via offer-letter API server
+            import urllib.request
+            import json
+
+            api_payload = {
+                "name": name.strip(),
+                "college": college.strip(),
+                "email": email.strip(),
+                "test_mode": False,
+            }
+
+            try:
+                req = urllib.request.Request(
+                    "http://127.0.0.1:5055/api/send-offer",
+                    data=json.dumps(api_payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+
+                if resp_data.get("status") in ("success", "skipped"):
+                    status_text = "Delivered & Queued" if resp_data.get("status") == "success" else "Skipped (Already Sent)"
+                    embed = discord.Embed(
+                        title=f"✅ Offer Letter Dispatched — {status_text}",
+                        description=(
+                            f"**Recipient:** {name}\n"
+                            f"**College:** {college}\n"
+                            f"**Email:** {email}\n\n"
+                            f"📧 Email sent via Stalwart Mail Server (`shreesh@hackerrankcampuscrew.xyz`) with DKIM signing."
+                        ),
+                        color=discord.Color.teal(),
+                    )
+                    await interaction.followup.send(embed=embed, file=file, ephemeral=True)
+                else:
+                    await interaction.followup.send(
+                        f"⚠️ Error sending email: {resp_data.get('message')}",
+                        ephemeral=True,
+                    )
+            except Exception as e:
+                await interaction.followup.send(
+                    f"❌ Failed to reach mail dispatch daemon (port 5055): {e}",
+                    ephemeral=True,
+                )
+
