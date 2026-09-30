@@ -8,6 +8,7 @@ import time
 from collections import defaultdict
 
 import discord
+import httpx
 from discord.ext import commands, tasks
 
 from src.auth_gate import check_gate, get_user_role, Role
@@ -17,10 +18,10 @@ from src.cert_generator import build_cert_preview_file
 from src.csv_validator import build_canva_file, build_event_report, build_summary_embed, parse_contest_csv
 from src.db import ACHIEVEMENT_DEFS, award_points, check_and_grant_achievements, close_db, init_db, log_audit, record_event_submission
 from src.escalation_views import ConfirmDispatchView, PersistentTicketView
+from src.health import EngineProbe, HealthMonitor, format_alert, probe_engine
 from src.graph import PipelineState, extract_escalation_request, get_pipeline
 from src.incident_cluster import incident_engine
 from src.knowledge import check_and_reload, load_knowledge, load_references
-from src.llm_client import get_llm
 from src.scheduler import setup_scheduler
 from src.slash_commands import register_commands
 from src.vision import analyze_screenshot, is_image_attachment
@@ -89,16 +90,56 @@ async def on_ready() -> None:
 # ── Background tasks ─────────────────────────────────────────────────────
 
 
+_health_monitor = HealthMonitor(failure_threshold=settings.health_alert_threshold)
+
+
+def _health_engines() -> list[EngineProbe]:
+    engines = [EngineProbe("vLLM (primary)", settings.vllm_base_url, settings.vllm_model, settings.vllm_api_key)]
+    if settings.enable_nim_fallback and settings.nim_base_url:
+        engines.append(EngineProbe("Fallback", settings.nim_base_url, settings.nim_model, settings.nim_api_key))
+    return engines
+
+
+async def _send_health_alert(text: str) -> None:
+    recipients = {settings.owner_discord_id, settings.poc_discord_sreesanth} - {""}
+    for raw_id in recipients:
+        try:
+            user = await bot.fetch_user(int(raw_id))
+            await user.send(text)
+        except (ValueError, discord.HTTPException):
+            log.warning("Could not deliver health alert to %s", raw_id)
+
+
 @tasks.loop(seconds=settings.health_check_interval)
 async def health_loop() -> None:
-    try:
-        llm = get_llm()
-        result = await llm.ainvoke([
-            {"role": "user", "content": "ping"},
-        ])
-        log.debug("Health probe OK: %s", result.content[:20] if result.content else "empty")
-    except Exception:
-        log.warning("vLLM health probe failed — inference engine may be down")
+    engines = _health_engines()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        results = {e.name: await probe_engine(client, e) for e in engines}
+
+        # Keep the primary warm (KV cache / CUDA kernels) with a 2-token completion.
+        primary = engines[0]
+        if results[primary.name].ok:
+            try:
+                await client.post(
+                    f"{primary.base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {primary.api_key}"},
+                    json={"model": primary.model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 2},
+                )
+            except httpx.HTTPError:
+                pass
+
+    for name in _health_monitor.changed_engines(results):
+        res = results[name]
+        if res.ok:
+            log.info("[HEALTH] %s is healthy", name)
+        else:
+            log.warning("[HEALTH] %s is down: %s", name, res.detail)
+
+    alert = _health_monitor.record(results)
+    if alert:
+        text = format_alert(alert, results, settings.health_check_interval, _health_monitor.failure_threshold)
+        log.error("[HEALTH] %s", text.replace("\n", " | "))
+        await _send_health_alert(text)
 
 
 @health_loop.before_loop

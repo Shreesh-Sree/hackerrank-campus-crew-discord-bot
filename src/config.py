@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     # Production operations
     log_level: str = "INFO"
     health_check_interval: int = 60
+    health_alert_threshold: int = 3
     knowledge_reload_interval: int = 300
     max_conversation_turns: int = 8
     db_path: str = "data/hrcc.db"
