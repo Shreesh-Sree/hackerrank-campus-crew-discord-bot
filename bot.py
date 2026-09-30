@@ -12,6 +12,7 @@ import httpx
 from discord.ext import commands, tasks
 
 from src.auth_gate import check_gate, get_user_role, Role
+from src.channels import ChannelMode, get_channel_mode
 from src.config import settings
 from src.context import memory
 from src.cert_generator import build_cert_preview_file
@@ -175,6 +176,12 @@ async def on_message(message: discord.Message) -> None:
             "I only work within the HackerRank Campus Crew server. "
             "Please use commands in the support channel."
         )
+        return
+
+    mode = get_channel_mode(message.channel.id, getattr(message.channel, "parent_id", None))
+    if mode is ChannelMode.BROADCAST_ONLY:
+        return
+    if mode is ChannelMode.MENTION_ONLY and not (bot.user is not None and bot.user.mentioned_in(message)):
         return
 
     # Attachment auto-detection

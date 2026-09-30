@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     # Discord
     discord_bot_token: str
     discord_home_channel: int = 0
+    # Comma-separated channel IDs. Support channels answer without a mention;
+    # every other channel becomes mention-only once this is set.
+    support_channel_ids: str = ""
+    # Comma-separated channel IDs where the bot ignores chat entirely.
+    announcement_channel_ids: str = ""
     allow_all_users: bool = True
 
     # vLLM inference (OpenAI-compatible endpoint used via LangChain) — primary engine
