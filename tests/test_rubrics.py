@@ -156,3 +156,34 @@ class TestChunking:
         for chunk in chunks:
             opens = chunk.count("```")
             assert opens % 2 == 0, f"Unbalanced code fence in chunk: {chunk[:80]}..."
+
+
+# ── Platform ambiguity (HRW vs HRC dual-track) ────────────────────────────
+
+
+class TestPlatformAmbiguity:
+    @pytest.mark.parametrize("text", [
+        "How do I start the test?",
+        "how to create a contest for my college",
+        "Can I schedule the coding round for Friday?",
+    ])
+    def test_ambiguous(self, text: str) -> None:
+        from src.rubrics import is_platform_ambiguous
+        assert is_platform_ambiguous(text)
+
+    @pytest.mark.parametrize("text", [
+        "How do I create a test on HRW?",
+        "how to host the contest on HRC",
+        "Can I set up a quiz on HackerRank for Work?",
+        "what are the reward tiers",
+        "thanks, the test went great",
+    ])
+    def test_not_ambiguous(self, text: str) -> None:
+        from src.rubrics import is_platform_ambiguous
+        assert not is_platform_ambiguous(text)
+
+    def test_knowledge_node_adds_dual_track(self) -> None:
+        import asyncio
+        from src.graph import knowledge_node
+        out = asyncio.run(knowledge_node({"message_content": "How do I start the test?"}))
+        assert "AMBIGUOUS PLATFORM" in out["knowledge_context"]

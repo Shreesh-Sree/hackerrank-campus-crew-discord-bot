@@ -135,3 +135,19 @@ def chunk_message(text: str, limit: int = 2000) -> list[str]:
         chunks.append(chunk)
 
     return chunks
+
+
+_PLATFORM_ACTION_RE = re.compile(
+    r"\b(start|create|set\s*up|setup|host|make|schedule|launch|run|publish|configure)\b"
+    r".{0,40}\b(test|contest|assessment|coding\s+round|quiz)\b",
+    re.IGNORECASE,
+)
+_PLATFORM_NAMED_RE = re.compile(
+    r"\b(hrw|hrc|skill\s*up|hackerrank\s+for\s+work|community|work/login|administration/contests)\b",
+    re.IGNORECASE,
+)
+
+
+def is_platform_ambiguous(text: str) -> bool:
+    """True when a test/contest setup question doesn't say which platform (HRW vs HRC)."""
+    return bool(_PLATFORM_ACTION_RE.search(text)) and not _PLATFORM_NAMED_RE.search(text)

@@ -22,6 +22,7 @@ from src.rubrics import (
     has_campus_crew_intent,
     is_injection_attempt,
     is_noise,
+    is_platform_ambiguous,
     scrub_secrets,
 )
 from src.escalation import resolve_lead
@@ -125,6 +126,18 @@ async def knowledge_node(state: PipelineState) -> dict[str, Any]:
             "SkillUp (hackerrank.com/skillup) is STRICTLY for self-paced student learning. "
             "It must NEVER be used to host campus events, coding contests, or hackathons. "
             "Use HRW or HRC instead."
+        )
+
+    if is_platform_ambiguous(text):
+        context_parts.append(
+            "\n## AMBIGUOUS PLATFORM — ANSWER BOTH TRACKS\n"
+            "The ambassador did not say which platform. Do not guess. Ask whether they are on "
+            "HRW (HackerRank for Work) or HRC (HackerRank Community), then give short steps for each:\n"
+            "- If HRW (hackerrank.com/work/login, the primary platform for official campus tests): "
+            "create the test, lock it immediately so it stays private, and set a 15-30 minute buffer.\n"
+            "- If HRC (fallback while HRW access is pending): create the contest at "
+            "hackerrank.com/administration/contests/create.\n"
+            "Remind them SkillUp is never used to host campus tests."
         )
 
     escalation = detect_escalation_target(text)
