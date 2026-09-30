@@ -215,3 +215,41 @@ class TestConfirmDispatchView:
         allowed, messages = asyncio.run(run())
         assert allowed is False
         assert "Only the ambassador" in messages[0]
+
+
+class TestIncidentEscalation:
+    def _report(self):
+        from hrcc_bot.pipeline.incident_cluster import IncidentReport
+        return IncidentReport(
+            signature="500", first_ts=0.0, channel_ids={1, 2}, author_ids={1, 2, 3},
+            messages=["HRW 500 error", "getting 500", "500 on contest"],
+        )
+
+    def test_opens_p0_ticket_and_dms_tech_lead(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from hrcc_bot.services.escalation import escalate_incident, incident_notice
+        monkeypatch.setattr(settings, "poc_discord_sreesanth", "555")
+        client = _FakeClient()
+        report = self._report()
+
+        outcome = asyncio.run(escalate_incident(
+            client=client, report=report, channel_id=1, message_id=2, author_id=3, author_name="amb",  # type: ignore[arg-type]
+        ))
+
+        assert outcome.ticket is not None
+        assert outcome.ticket["urgency"] == "P0"
+        assert outcome.ticket["poc_name"] == "sreesanth"
+        assert client.fetched == [555]
+        assert "has been notified" in incident_notice(report, outcome)
+
+    def test_notice_does_not_claim_notification_without_dm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from hrcc_bot.services.escalation import escalate_incident, incident_notice
+        monkeypatch.setattr(settings, "poc_discord_sreesanth", "")
+        report = self._report()
+
+        outcome = asyncio.run(escalate_incident(
+            client=_FakeClient(), report=report, channel_id=1, message_id=2, author_id=3, author_name="amb",  # type: ignore[arg-type]
+        ))
+
+        text = incident_notice(report, outcome)
+        assert "notified" not in text
+        assert outcome.ticket["ticket_code"] in text  # type: ignore[index]

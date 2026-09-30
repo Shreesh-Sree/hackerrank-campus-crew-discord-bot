@@ -22,6 +22,7 @@ from hrcc_bot.bot.escalation_views import ConfirmDispatchView, PersistentTicketV
 from hrcc_bot.core.health import EngineProbe, HealthMonitor, format_alert, probe_engine
 from hrcc_bot.pipeline.graph import PipelineState, extract_escalation_request, get_pipeline
 from hrcc_bot.pipeline.incident_cluster import incident_engine
+from hrcc_bot.services.escalation import escalate_incident, incident_notice
 from hrcc_bot.pipeline.knowledge import check_and_reload, load_knowledge, load_references
 from hrcc_bot.services.scheduler import setup_scheduler
 from hrcc_bot.bot.commands import register_commands
@@ -207,11 +208,15 @@ async def on_message(message: discord.Message) -> None:
     if not is_dm:
         incident = incident_engine.ingest(message.content, message.author.id, message.channel.id)
         if incident and incident.count == 3:
-            await message.channel.send(
-                f"**Platform Incident Detected** — {incident.count} reports in the last 2 minutes.\n"
-                f"We are aware of this issue. **Sreesanth (Technical Lead)** has been notified.\n"
-                f"If HRW is down, use **HRC** (`hackerrank.com`) as a fallback."
+            outcome = await escalate_incident(
+                client=bot,
+                report=incident,
+                channel_id=message.channel.id,
+                message_id=message.id,
+                author_id=message.author.id,
+                author_name=str(message.author),
             )
+            await message.channel.send(incident_notice(incident, outcome))
             return
         elif incident and incident.count > 3:
             return

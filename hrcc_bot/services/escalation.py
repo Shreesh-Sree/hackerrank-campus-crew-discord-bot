@@ -102,6 +102,7 @@ async def open_escalation(
     author_name: str,
     lead_key: str,
     description: str,
+    urgency: str | None = None,
 ) -> EscalationOutcome:
     """Create a ticket and DM the lead, enforcing the per-category cooldown.
 
@@ -109,7 +110,7 @@ async def open_escalation(
     ambassador clicks Confirm Dispatch).
     """
     category = CATEGORY_MAP.get(lead_key, "OPS")
-    urgency = _classify_urgency(description)
+    urgency = urgency or _classify_urgency(description)
 
     existing = find_open_duplicate(author_id, category, urgency)
     if existing:
@@ -144,6 +145,50 @@ async def open_escalation(
             "on" if settings.enable_dm_routing else "off",
         )
     return EscalationOutcome(lead_key=lead_key, ticket=ticket, dm_delivered=delivered)
+
+
+async def escalate_incident(
+    *,
+    client: discord.Client,
+    report: Any,
+    channel_id: int,
+    message_id: int,
+    author_id: int,
+    author_name: str,
+) -> EscalationOutcome:
+    """Open a P0 ticket for the Technical Lead when an incident storm is detected."""
+    samples = "\n".join(f"- {m[:200]}" for m in report.messages[-3:])
+    description = (
+        f"[Incident storm] {report.count} ambassadors reported the same error within minutes "
+        f"across {len(report.channel_ids)} channel(s).\nSample reports:\n{samples}"
+    )
+    return await open_escalation(
+        client=client,
+        channel_id=channel_id,
+        message_id=message_id,
+        author_id=author_id,
+        author_name=author_name,
+        lead_key="sreesanth",
+        description=description,
+        urgency="P0",
+    )
+
+
+def incident_notice(report: Any, outcome: EscalationOutcome) -> str:
+    """Channel message for a detected incident that only claims what actually happened."""
+    if outcome.ticket and outcome.dm_delivered:
+        status = f"**Sreesanth (Technical Lead)** has been notified (ticket **{outcome.ticket['ticket_code']}**)."
+    elif outcome.ticket:
+        status = f"A P0 ticket **{outcome.ticket['ticket_code']}** has been logged for **Sreesanth (Technical Lead)**."
+    elif outcome.duplicate_of:
+        status = f"This is being tracked under ticket **{outcome.duplicate_of['ticket_code']}**."
+    else:
+        status = "Please use `/escalate` to reach the Technical Lead."
+    return (
+        f"**Platform Incident Detected** — {report.count} reports in the last 2 minutes.\n"
+        f"{status}\n"
+        f"If HRW is down, use **HRC** (`hackerrank.com`) as a fallback."
+    )
 
 
 def format_outcome(outcome: EscalationOutcome) -> str:
