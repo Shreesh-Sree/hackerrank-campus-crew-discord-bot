@@ -107,7 +107,12 @@ def require_role(min_role: Role):
 
 
 def check_gate(user_id: int, command_name: str) -> str | None:
-    if command_name in UNGATED_COMMANDS:
+    """Return a block message for unregistered users, or None if the command may run.
+
+    ``ALLOW_ALL_USERS=true`` opens ambassador commands to unregistered users
+    (rollout mode). Admin/lead commands still enforce their own role checks.
+    """
+    if command_name in UNGATED_COMMANDS or settings.allow_all_users:
         return None
 
     role = get_user_role(user_id)
@@ -115,3 +120,20 @@ def check_gate(user_id: int, command_name: str) -> str | None:
         return None
 
     return "You need to register first. Run `/register` to verify your HRW identity."
+
+
+def can_view_user_data(viewer_id: int, owner_id: int) -> bool:
+    """Users see their own tickets/profile; moderators and above see everyone's."""
+    return viewer_id == owner_id or get_user_role(viewer_id) >= Role.MODERATOR
+
+
+class GatedCommandTree(app_commands.CommandTree):
+    """Command tree that runs the registration gate before every slash command."""
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        cmd_name = interaction.command.name if interaction.command else ""
+        block_msg = check_gate(interaction.user.id, cmd_name)
+        if block_msg:
+            await interaction.response.send_message(block_msg, ephemeral=True)
+            return False
+        return True

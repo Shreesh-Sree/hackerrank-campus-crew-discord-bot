@@ -17,7 +17,7 @@ from hrcc_bot.services.letter_service import generate_permission_letter_pdf, gen
 from hrcc_bot.bot.letter_views import LetterApprovalView
 import os
 
-from hrcc_bot.bot.auth_gate import Role, get_user_role
+from hrcc_bot.bot.auth_gate import Role, can_view_user_data, get_user_role
 from hrcc_bot.core.db import (
     ACHIEVEMENT_DEFS,
     add_support_notice,
@@ -329,12 +329,13 @@ def _marketing_embeds(
 # ── /ticket_status ────────────────────────────────────────────────────────
 
 
-def _ticket_status_embed(ticket_code: str) -> discord.Embed:
-    ticket = get_ticket(ticket_code.upper())
-    if not ticket:
+def _ticket_status_embed(ticket_code: str, viewer_id: int) -> discord.Embed:
+    ticket = get_ticket(ticket_code.strip().upper())
+    # Same reply for "missing" and "not yours" so ticket codes can't be probed.
+    if not ticket or not can_view_user_data(viewer_id, ticket["author_id"]):
         return discord.Embed(
             title="Ticket Not Found",
-            description=f"No ticket found with code `{ticket_code}`.",
+            description=f"No ticket `{ticket_code}` found on your account.",
             color=discord.Color.red(),
         )
 
@@ -419,7 +420,9 @@ def register_commands(tree: app_commands.CommandTree) -> None:
     @tree.command(name="ticket_status", description="Check the status of an escalation ticket")
     @app_commands.describe(ticket_code="Ticket code (e.g. HRCC-101)")
     async def ticket_status_cmd(interaction: discord.Interaction, ticket_code: str) -> None:
-        await interaction.response.send_message(embed=_ticket_status_embed(ticket_code))
+        await interaction.response.send_message(
+            embed=_ticket_status_embed(ticket_code, interaction.user.id), ephemeral=True
+        )
 
     @tree.command(name="validate_contest", description="Validate a contest CSV and generate Canva certificate CSV")
     @app_commands.describe(
@@ -498,6 +501,9 @@ def register_commands(tree: app_commands.CommandTree) -> None:
     @tree.command(name="ambassador", description="View an ambassador's profile and event history")
     @app_commands.describe(user="The ambassador to look up")
     async def ambassador_cmd(interaction: discord.Interaction, user: discord.User) -> None:
+        if get_user_role(interaction.user.id) < Role.ADMIN:
+            await interaction.response.send_message("Admin access required.", ephemeral=True)
+            return
         profile = get_ambassador_profile(user.id)
         events = get_ambassador_events(user.id)
 
@@ -528,7 +534,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         else:
             embed.add_field(name="Events", value="No events recorded.", inline=False)
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ── /set_stage ────────────────────────────────────────────────────────
 

@@ -11,7 +11,7 @@ import discord
 import httpx
 from discord.ext import commands, tasks
 
-from hrcc_bot.bot.auth_gate import check_gate, get_user_role, Role
+from hrcc_bot.bot.auth_gate import GatedCommandTree
 from hrcc_bot.bot.channels import ChannelMode, get_channel_mode
 from hrcc_bot.config import settings
 from hrcc_bot.pipeline.context import memory
@@ -39,7 +39,7 @@ intents.message_content = True
 intents.dm_messages = True
 intents.members = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, tree_cls=GatedCommandTree)
 
 _rate_buckets: dict[int, list[float]] = defaultdict(list)
 _user_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -414,19 +414,6 @@ async def _handle_image_upload(
         )
         embed.set_footer(text="Upload a screenshot of any HRW/HRC error for instant diagnosis.")
         await message.reply(embed=embed, mention_author=False)
-
-
-# ── Auth gate for all slash commands ───────────────────────────────────────
-
-
-@bot.tree.interaction_check
-async def global_gate_check(interaction: discord.Interaction) -> bool:
-    cmd_name = interaction.command.name if interaction.command else ""
-    block_msg = check_gate(interaction.user.id, cmd_name)
-    if block_msg:
-        await interaction.response.send_message(block_msg, ephemeral=True)
-        return False
-    return True
 
 
 # ── Error handlers ────────────────────────────────────────────────────────

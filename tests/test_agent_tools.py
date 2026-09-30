@@ -73,13 +73,27 @@ class TestToolLookupTicket:
             channel_id=1, message_id=1, author_id=1, author_name="Test",
             category="OPS", urgency="P2", poc_name="sanskruti", description="test issue",
         )
-        result = lookup_ticket_status.invoke({"ticket_code": ticket["ticket_code"]})
+        result = lookup_ticket_status.invoke({"ticket_code": ticket["ticket_code"], "state": {"author_id": 1}})
         assert ticket["ticket_code"] in result
         assert "PENDING" in result
 
     def test_not_found(self) -> None:
-        result = lookup_ticket_status.invoke({"ticket_code": "HRCC-99999"})
-        assert "No ticket found" in result
+        result = lookup_ticket_status.invoke({"ticket_code": "HRCC-99999", "state": {"author_id": 1}})
+        assert "No ticket HRCC-99999 found" in result
+
+    def test_other_users_ticket_hidden(self) -> None:
+        ticket = create_ticket(
+            channel_id=1, message_id=1, author_id=1, author_name="Owner",
+            category="OPS", urgency="P2", poc_name="sanskruti", description="private issue",
+        )
+        result = lookup_ticket_status.invoke({"ticket_code": ticket["ticket_code"], "state": {"author_id": 2}})
+        assert "PENDING" not in result and "private" not in result
+
+
+class TestToolProfileScope:
+    def test_cannot_look_up_someone_else(self) -> None:
+        result = lookup_ambassador_profile.invoke({"ambassador_id": 42, "state": {"author_id": 7}})
+        assert "only look up their own" in result
 
 
 class TestToolRewardTier:
@@ -107,7 +121,7 @@ class TestToolHandbookSearch:
 
 class TestToolAmbassadorProfile:
     def test_no_events(self) -> None:
-        result = lookup_ambassador_profile.invoke({"ambassador_id": 99999})
+        result = lookup_ambassador_profile.invoke({"ambassador_id": 99999, "state": {"author_id": 99999}})
         assert "No events" in result
 
     def test_with_events(self) -> None:
@@ -115,7 +129,7 @@ class TestToolAmbassadorProfile:
             ambassador_id=42, ambassador_name="TestAmb", event_name="CodeFest",
             participant_count=200, reward_tier="Standard", merch_eligible=False,
         )
-        result = lookup_ambassador_profile.invoke({"ambassador_id": 42})
+        result = lookup_ambassador_profile.invoke({"ambassador_id": 42, "state": {"author_id": 42}})
         assert "TestAmb" in result
         assert "CodeFest" in result
 

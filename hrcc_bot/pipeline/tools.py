@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
+
+from hrcc_bot.bot.auth_gate import can_view_user_data
 
 from hrcc_bot.core.db import (
     get_ambassador_events,
@@ -41,15 +46,15 @@ def create_escalation_ticket(
 
 
 @tool
-def lookup_ticket_status(ticket_code: str) -> str:
-    """Look up the live status and resolution notes of an escalation ticket.
+def lookup_ticket_status(ticket_code: str, state: Annotated[dict, InjectedState]) -> str:
+    """Look up the live status and resolution notes of one of the asker's escalation tickets.
 
     Args:
         ticket_code: The ticket identifier, e.g. HRCC-101.
     """
     ticket = get_ticket(ticket_code.upper().strip())
-    if not ticket:
-        return f"No ticket found with code {ticket_code}."
+    if not ticket or not can_view_user_data(int(state.get("author_id") or 0), ticket["author_id"]):
+        return f"No ticket {ticket_code} found on the asker's account."
     status = ticket["status"]
     notes = ticket.get("resolution_notes", "")
     return (
@@ -95,12 +100,14 @@ def search_handbook_knowledge(query: str) -> str:
 
 
 @tool
-def lookup_ambassador_profile(ambassador_id: int) -> str:
-    """Query past event history and stats for a specific ambassador.
+def lookup_ambassador_profile(ambassador_id: int, state: Annotated[dict, InjectedState]) -> str:
+    """Query past event history and stats for the asking ambassador (moderators may look up anyone).
 
     Args:
         ambassador_id: The Discord user ID of the ambassador.
     """
+    if not can_view_user_data(int(state.get("author_id") or 0), ambassador_id):
+        return "Ambassadors can only look up their own event history."
     from hrcc_bot.core.db import get_ambassador_events as _get_events
 
     events = _get_events(ambassador_id)

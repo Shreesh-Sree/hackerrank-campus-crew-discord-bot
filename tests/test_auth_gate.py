@@ -172,3 +172,63 @@ class TestAllTickets:
                        category="TECH", urgency="P1", poc_name="sreesanth")
         tickets = get_all_tickets()
         assert len(tickets) == 1
+
+
+class TestAllowAllUsersSwitch:
+    def test_open_mode_lets_unregistered_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from hrcc_bot.config import settings
+        monkeypatch.setattr(settings, "allow_all_users", True)
+        assert check_gate(99999, "escalate") is None
+
+    def test_closed_mode_blocks_unregistered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from hrcc_bot.config import settings
+        monkeypatch.setattr(settings, "allow_all_users", False)
+        assert "register" in (check_gate(99999, "escalate") or "")
+
+
+class TestGatedCommandTree:
+    def test_tree_blocks_and_replies(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import asyncio
+        import discord
+        from hrcc_bot.bot.auth_gate import GatedCommandTree
+        from hrcc_bot.config import settings
+        monkeypatch.setattr(settings, "allow_all_users", False)
+
+        sent: list[str] = []
+
+        class _Resp:
+            async def send_message(self, content: str, ephemeral: bool = False) -> None:
+                sent.append(content)
+
+        class _Cmd:
+            name = "escalate"
+
+        class _User:
+            id = 99999
+
+        class _Interaction:
+            command = _Cmd()
+            user = _User()
+            response = _Resp()
+
+        async def run() -> bool:
+            tree = GatedCommandTree(discord.Client(intents=discord.Intents.default()))
+            return await tree.interaction_check(_Interaction())  # type: ignore[arg-type]
+
+        assert asyncio.run(run()) is False
+        assert "register" in sent[0]
+
+    def test_bot_uses_gated_tree(self) -> None:
+        from hrcc_bot.app import bot
+        from hrcc_bot.bot.auth_gate import GatedCommandTree
+        assert isinstance(bot.tree, GatedCommandTree)
+
+
+class TestCanViewUserData:
+    def test_own_data(self) -> None:
+        from hrcc_bot.bot.auth_gate import can_view_user_data
+        assert can_view_user_data(5, 5)
+
+    def test_others_data_needs_moderator(self) -> None:
+        from hrcc_bot.bot.auth_gate import can_view_user_data
+        assert not can_view_user_data(5, 6)

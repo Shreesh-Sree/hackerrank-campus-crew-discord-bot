@@ -498,6 +498,7 @@ sudo systemctl enable --now hrcc-bot
 | `POC_DISCORD_SREESANTH` | Technical Lead Discord ID |
 | `POC_DISCORD_NITISH` | Design Lead Discord ID |
 | `DATABASE_URL` | PostgreSQL connection string (empty = SQLite fallback) |
+| `ALLOW_ALL_USERS` | `true` = unregistered users may use ambassador commands (rollout mode); `false` = `/register` required. Admin/lead commands are always role-checked |
 | `SUPPORT_CHANNEL_IDS` | Optional. Comma-separated channels that answer without a mention; once set, all other channels are mention-only |
 | `ANNOUNCEMENT_CHANNEL_IDS` | Optional. Comma-separated channels where the bot ignores chat |
 | `HEALTH_ALERT_THRESHOLD` | Consecutive all-engines-down checks before alerting (default 3) |
