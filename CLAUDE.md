@@ -1,6 +1,8 @@
-# CLAUDE.md — HackerRank Campus Crew Super Agent (`hrcc_bot`)
+# CLAUDE.md
 
-This file guides Claude Code when working within the `hrcc_bot` repository (`/data/production/hrcc_bot`).
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+Repository: HackerRank Campus Crew Super Agent (`hrcc_bot`) at `/data/production/hrcc_bot`. **This directory is also the live production checkout** — `deploy/hrcc-bot.service` runs `venv/bin/python bot.py` from here, so editing files here affects the running bot on its next restart.
 
 ---
 
@@ -46,6 +48,20 @@ This file guides Claude Code when working within the `hrcc_bot` repository (`/da
      - **Nitish (Design Lead):** Brand assets, certificate templates, visual guidelines.
   7. **Safety & Formatting (Rubric 7):** Prompt injection filtering, token redaction, intelligent 2,000-character chunking preserving code blocks.
 
+### How the Code Fits Together
+- **Entry point (`bot.py`):** Discord lifecycle, per-user rate limiting/locks, `on_message` handling, and background tasks. Calls `init_db()`, `register_commands(bot.tree)` (`src/slash_commands.py`), and `setup_scheduler(bot)`. Image attachments go to `src/vision.py`; text goes through the LangGraph pipeline.
+- **Natural-language pipeline (`src/graph.py`):** LangGraph `StateGraph` over `PipelineState`: `sentinel → knowledge → replier → (tools → tool_response)? → auditor`. Sentinel returning dismiss routes straight to `END` (zero LLM calls). The replier binds the `@tool` functions in `src/tools.py`; the auditor applies scrubbing/Chakra/SkillUp guards and chunking from `src/rubrics.py`. The compiled graph is a singleton via `get_pipeline()`.
+- **Prompts:** All LLM prompts live in `src/prompts/templates/*.jinja`, rendered via `get_template_manager().render_template(...)`. Edit templates, not inline strings.
+- **Knowledge / RAG (`src/knowledge.py`):** Vector-less retrieval over `knowledge_data.yaml` + `references/*.md` (token-overlap scoring). Files are hot-reloaded on mtime change (`check_and_reload`), so knowledge edits don't require code changes.
+- **Access control (`src/auth_gate.py`):** `Role` IntEnum (`UNREGISTERED < AMBASSADOR < MODERATOR < ADMIN < OWNER`). Slash commands use the role checks here; the bot rejects DMs.
+- **Resilience layers** (each logs a `[... FAILOVER]` tag):
+  - `src/llm_client.py` — `ResilientChatModel` wraps vLLM with NIM/Ollama fallback; only transport/API errors trigger failover (`LLMFailoverError` if both fail).
+  - `src/db.py` — PostgreSQL when `DATABASE_URL` is set, else/fallback SQLite at `data/hrcc.db`. **Always go through `_execute` / `_fetchone` / `_fetchall`** and write SQL with `?` placeholders (auto-translated to `%s` for Postgres) so the dual backend and failover keep working. Add new columns to `_SQLITE_MIGRATIONS` (applied to both backends on startup).
+  - `src/vision.py` — ordered endpoint chain vLLM multimodal → NIM vision → Ollama `llava`, plus a deterministic severity classifier (Chakra = P0).
+- **Scheduler (`src/scheduler.py`):** 5-minute contest lifecycle daemon (T-24h / T-1h / T+24h reminders, deduplicated via `_should_send`), weekly digests, compliance nudges.
+- **Escalations:** `src/escalation.py` creates tickets and DMs POCs; `src/escalation_views.py` holds the persistent Acknowledge/Reply/Resolve button views (re-registered on startup).
+- `src/config.py` instantiates `settings = Settings()` at import time and `DISCORD_BOT_TOKEN` is required — any import of `src.*` fails without it set.
+
 ---
 
 ## 3. Code & Engineering Standards
@@ -73,6 +89,20 @@ cp deploy/.env.example .env
 ```bash
 python3 bot.py
 ```
+
+### Tests
+```bash
+DISCORD_BOT_TOKEN=test venv/bin/python -m pytest tests/ -q                     # full suite (~3s)
+DISCORD_BOT_TOKEN=test venv/bin/python -m pytest tests/test_rubrics.py -q      # one file
+DISCORD_BOT_TOKEN=test venv/bin/python -m pytest tests/test_rubrics.py::TestNoiseGate -q   # one class/test
+```
+Async code is tested with `asyncio.run(...)` inside plain tests (no pytest-asyncio). There is no linter/formatter config in the repo.
+
+### Containers (Podman)
+`podman-compose.yml` runs Postgres 16 (host port `127.0.0.1:5433`) plus the bot (host networking, reads `.env.container`). `deploy/podman-deploy.sh` wraps this.
+
+### Deploy Script
+`deploy/deploy.sh` does `git pull origin main` → pip install → tests → copies the systemd unit → **restarts the production service**. Don't run it as a "check".
 
 ### Git Checkpoints & Push
 ```bash
