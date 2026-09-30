@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.db import (
+from hrcc_bot.core.db import (
     TIER_BADGES,
     award_points,
     close_db,
@@ -15,12 +15,12 @@ from src.db import (
     get_national_leaderboard,
     init_db,
 )
-from src.db import _compute_tier
+from hrcc_bot.core.db import _compute_tier
 
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     test_db = tmp_path / "test.db"
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", test_db)

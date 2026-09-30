@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Repository: HackerRank Campus Crew Super Agent (`hrcc_bot`) at `/data/production/hrcc_bot`. **This directory is also the live production checkout** — `deploy/hrcc-bot.service` runs `venv/bin/python bot.py` from here, so editing files here affects the running bot on its next restart.
+Repository: HackerRank Campus Crew Super Agent (`hrcc_bot`) at `/data/production/hrcc_bot`. **This directory is also the live production checkout** — `deploy/hrcc-bot.service` runs `venv/bin/python -m hrcc_bot` from here, so editing files here affects the running bot on its next restart.
 
 ---
 
@@ -29,7 +29,7 @@ Repository: HackerRank Campus Crew Super Agent (`hrcc_bot`) at `/data/production
 ### Core Architecture Components
 - **Framework:** `discord.py` (v2.3+ async) + `httpx` (async vLLM client) + `pydantic` / `pydantic-settings` (v2+ validation).
 - **Inference Engine:** vLLM running `neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8` (OpenAI-compatible `/v1/chat/completions`).
-- **Knowledge Base:** `knowledge_data.yaml` and reference docs in `references/` (`handbook.md`, `sops.md`, `templates.md`).
+- **Knowledge Base:** `knowledge/knowledge_data.yaml` and reference docs in `knowledge/references/` (`handbook.md`, `sops.md`, `templates.md`).
 - **Deterministic Multi-Rubric Intent Pipeline:**
   1. **Noise & Chatter Gate (Rubric 1):** Classifies incoming channel messages. If casual banter or off-topic, outputs `NO_REPLY` and silently drops (0 API calls, cancels typing immediately).
   2. **Direct Mentions & DMs:** Always processed through the specialized context engine.
@@ -48,22 +48,32 @@ Repository: HackerRank Campus Crew Super Agent (`hrcc_bot`) at `/data/production
      - **Nitish (Design Lead):** Brand assets, certificate templates, visual guidelines.
   7. **Safety & Formatting (Rubric 7):** Prompt injection filtering, token redaction, intelligent 2,000-character chunking preserving code blocks.
 
+### Repository Layout
+- `hrcc_bot/` — application package. `app.py` (Discord client, events, background loops), `config.py`, `paths.py` (all filesystem paths anchored to the repo root — use these, never `__file__`-relative paths).
+  - `core/` — infrastructure: DB, LLM client/failover, health probes, audit log.
+  - `pipeline/` — natural-language path: LangGraph graph, rubrics/guards, RAG, agent tools, memory, vision, prompts.
+  - `services/` — domain logic: escalation, HRW API, CSV/certificates, letters, email verification, scheduler.
+  - `bot/` — Discord surface: slash commands, auth gate, channel modes, interactive views.
+- `knowledge/` — handbook YAML + reference markdown (hot-reloaded; mounted read-only in the container).
+- `deploy/` — systemd unit and deploy scripts. `docs/` — `architecture/`, `operations/`, `legal/`.
+- Root `bot.py` is only a compatibility launcher for the old systemd `ExecStart`; delete it once the unit in `deploy/` is installed.
+
 ### How the Code Fits Together
-- **Entry point (`bot.py`):** Discord lifecycle, per-user rate limiting/locks, `on_message` handling, and background tasks. Calls `init_db()`, `register_commands(bot.tree)` (`src/slash_commands.py`), and `setup_scheduler(bot)`. Image attachments go to `src/vision.py`; text goes through the LangGraph pipeline.
-- **Natural-language pipeline (`src/graph.py`):** LangGraph `StateGraph` over `PipelineState`: `sentinel → knowledge → replier → (tools → tool_response)? → auditor`. Sentinel returning dismiss routes straight to `END` (zero LLM calls). The replier binds the `@tool` functions in `src/tools.py`; the auditor applies scrubbing/Chakra/SkillUp guards and chunking from `src/rubrics.py`. The compiled graph is a singleton via `get_pipeline()`.
-- **Prompts:** All LLM prompts live in `src/prompts/templates/*.jinja`, rendered via `get_template_manager().render_template(...)`. Edit templates, not inline strings.
-- **Knowledge / RAG (`src/knowledge.py`):** Vector-less retrieval over `knowledge_data.yaml` + `references/*.md` (token-overlap scoring). Files are hot-reloaded on mtime change (`check_and_reload`), so knowledge edits don't require code changes.
-- **Access control (`src/auth_gate.py`):** `Role` IntEnum (`UNREGISTERED < AMBASSADOR < MODERATOR < ADMIN < OWNER`). Slash commands use the role checks here; the bot rejects DMs.
+- **Entry point (`hrcc_bot/app.py`, run as `python -m hrcc_bot`):** Discord lifecycle, per-user rate limiting/locks, `on_message` handling, and background tasks. Calls `init_db()`, `register_commands(bot.tree)` (`hrcc_bot/bot/commands.py`), and `setup_scheduler(bot)`. Image attachments go to `hrcc_bot/pipeline/vision.py`; text goes through the LangGraph pipeline.
+- **Natural-language pipeline (`hrcc_bot/pipeline/graph.py`):** LangGraph `StateGraph` over `PipelineState`: `sentinel → knowledge → replier → (tools → tool_response)? → auditor`. Sentinel returning dismiss routes straight to `END` (zero LLM calls). The replier binds the `@tool` functions in `hrcc_bot/pipeline/tools.py`; the auditor applies scrubbing/Chakra/SkillUp guards and chunking from `hrcc_bot/pipeline/rubrics.py`. The compiled graph is a singleton via `get_pipeline()`.
+- **Prompts:** All LLM prompts live in `hrcc_bot/pipeline/prompts/templates/*.jinja`, rendered via `get_template_manager().render_template(...)`. Edit templates, not inline strings.
+- **Knowledge / RAG (`hrcc_bot/pipeline/knowledge.py`):** Vector-less retrieval over `knowledge/knowledge_data.yaml` + `knowledge/references/*.md` (token-overlap scoring). Files are hot-reloaded on mtime change (`check_and_reload`), so knowledge edits don't require code changes.
+- **Access control (`hrcc_bot/bot/auth_gate.py`):** `Role` IntEnum (`UNREGISTERED < AMBASSADOR < MODERATOR < ADMIN < OWNER`). Slash commands use the role checks here; the bot rejects DMs.
 - **Resilience layers** (each logs a `[... FAILOVER]` tag):
-  - `src/llm_client.py` — `ResilientChatModel` wraps vLLM with NIM/Ollama fallback; only transport/API errors trigger failover (`LLMFailoverError` if both fail).
-  - `src/db.py` — PostgreSQL when `DATABASE_URL` is set, else/fallback SQLite at `data/hrcc.db`. **Always go through `_execute` / `_fetchone` / `_fetchall`** and write SQL with `?` placeholders (auto-translated to `%s` for Postgres) so the dual backend and failover keep working. Add new columns to `_SQLITE_MIGRATIONS` (applied to both backends on startup).
-  - `src/vision.py` — ordered endpoint chain vLLM multimodal → NIM vision → Ollama `llava`, plus a deterministic severity classifier (Chakra = P0).
-- **Scheduler (`src/scheduler.py`):** 5-minute contest lifecycle daemon (T-24h / T-1h / T+24h reminders, deduplicated via `_should_send`), weekly digests, compliance nudges.
-- **Escalations:** every ticket path goes through `open_escalation()` in `src/escalation.py` (cooldown/dedup → create ticket → DM the POC). The chat tool `create_escalation_ticket` only *prepares* a request; `bot.py` reads it via `extract_escalation_request()` and attaches a `ConfirmDispatchView`, so nothing reaches a lead until the ambassador clicks. `src/escalation_views.py` also holds the persistent Acknowledge/Reply/Resolve views (re-registered on startup).
-- **Channel modes (`src/channels.py`):** `SUPPORT_CHANNEL_IDS` / `ANNOUNCEMENT_CHANNEL_IDS`; with neither set every channel is proactive (legacy behaviour).
-- **Health (`src/health.py`):** `health_loop` in `bot.py` probes each engine's `/models` (and checks the configured model is listed) and DMs owner + Technical Lead on sustained total outage.
+  - `hrcc_bot/core/llm_client.py` — `ResilientChatModel` wraps vLLM with NIM/Ollama fallback; only transport/API errors trigger failover (`LLMFailoverError` if both fail).
+  - `hrcc_bot/core/db.py` — PostgreSQL when `DATABASE_URL` is set, else/fallback SQLite at `data/hrcc.db`. **Always go through `_execute` / `_fetchone` / `_fetchall`** and write SQL with `?` placeholders (auto-translated to `%s` for Postgres) so the dual backend and failover keep working. Add new columns to `_SQLITE_MIGRATIONS` (applied to both backends on startup).
+  - `hrcc_bot/pipeline/vision.py` — ordered endpoint chain vLLM multimodal → NIM vision → Ollama `llava`, plus a deterministic severity classifier (Chakra = P0).
+- **Scheduler (`hrcc_bot/services/scheduler.py`):** 5-minute contest lifecycle daemon (T-24h / T-1h / T+24h reminders, deduplicated via `_should_send`), weekly digests, compliance nudges.
+- **Escalations:** every ticket path goes through `open_escalation()` in `hrcc_bot/services/escalation.py` (cooldown/dedup → create ticket → DM the POC). The chat tool `create_escalation_ticket` only *prepares* a request; `app.py` reads it via `extract_escalation_request()` and attaches a `ConfirmDispatchView`, so nothing reaches a lead until the ambassador clicks. `hrcc_bot/bot/escalation_views.py` also holds the persistent Acknowledge/Reply/Resolve views (re-registered on startup).
+- **Channel modes (`hrcc_bot/bot/channels.py`):** `SUPPORT_CHANNEL_IDS` / `ANNOUNCEMENT_CHANNEL_IDS`; with neither set every channel is proactive (legacy behaviour).
+- **Health (`hrcc_bot/core/health.py`):** `health_loop` in `app.py` probes each engine's `/models` (and checks the configured model is listed) and DMs owner + Technical Lead on sustained total outage.
 - **Operational notices:** `/support_broadcast` rows in `support_notices` are prepended to the RAG context by `knowledge.build_context_block()` until they expire.
-- `src/config.py` instantiates `settings = Settings()` at import time and `DISCORD_BOT_TOKEN` is required — any import of `src.*` fails without it set.
+- `hrcc_bot/config.py` instantiates `settings = Settings()` at import time and `DISCORD_BOT_TOKEN` is required — any import of `hrcc_bot.*` fails without it set (`tests/conftest.py` sets a dummy value).
 
 ---
 
@@ -84,20 +94,20 @@ Repository: HackerRank Campus Crew Super Agent (`hrcc_bot`) at `/data/production
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r deploy/requirements.txt
-cp deploy/.env.example .env
+pip install -r requirements-dev.txt
+cp .env.example .env
 ```
 
 ### Running Locally / Development
 ```bash
-python3 bot.py
+python -m hrcc_bot
 ```
 
 ### Tests
 ```bash
-DISCORD_BOT_TOKEN=test venv/bin/python -m pytest tests/ -q                     # full suite (~3s)
-DISCORD_BOT_TOKEN=test venv/bin/python -m pytest tests/test_rubrics.py -q      # one file
-DISCORD_BOT_TOKEN=test venv/bin/python -m pytest tests/test_rubrics.py::TestNoiseGate -q   # one class/test
+venv/bin/python -m pytest                                           # full suite (~3s)
+venv/bin/python -m pytest tests/test_rubrics.py                      # one file
+venv/bin/python -m pytest tests/test_rubrics.py::TestNoiseGate       # one class/test
 ```
 Async code is tested with `asyncio.run(...)` inside plain tests (no pytest-asyncio). There is no linter/formatter config in the repo.
 

@@ -89,7 +89,7 @@ Type=simple
 User=ai-server
 WorkingDirectory=/home/ai-server/hrcc_bot
 EnvironmentFile=/home/ai-server/hrcc_bot/.env
-ExecStart=/home/ai-server/hrcc_bot/.venv/bin/python main.py
+ExecStart=/home/ai-server/hrcc_bot/.venv/bin/python -m hrcc_bot
 
 Restart=always
 RestartSec=3s
@@ -147,7 +147,7 @@ ssh ai-server@10.1.53.27
 cd /home/ai-server/hrcc_bot
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r deploy/requirements.txt
+pip install -r requirements.txt
 ```
 
 ### Step 3: Stop Hermes Service & Start Native Bot

@@ -16,7 +16,7 @@ git pull origin main
 # Step 2: Run tests before deploying
 echo "[2/5] Running test suite..."
 source venv/bin/activate 2>/dev/null || true
-DISCORD_BOT_TOKEN=test DATABASE_URL="" python -m pytest tests/ -q --no-header 2>&1 | tail -3
+DATABASE_URL="" python -m pytest --no-header 2>&1 | tail -3
 echo ""
 
 # Step 3: Build the container image

@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.auth_gate import (
+from hrcc_bot.bot.auth_gate import (
     PRIVACY_EPHEMERAL,
     Role,
     UNGATED_COMMANDS,
@@ -15,7 +15,7 @@ from src.auth_gate import (
     get_user_role,
     is_ephemeral_command,
 )
-from src.db import (
+from hrcc_bot.core.db import (
     add_moderator,
     close_db,
     create_hrw_link,
@@ -30,7 +30,7 @@ from src.db import (
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     test_db = tmp_path / "test.db"
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", test_db)
@@ -55,12 +55,12 @@ class TestRoleResolution:
         assert get_user_role(200) == Role.MODERATOR
 
     def test_admin_role(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from src import config
+        from hrcc_bot import config
         monkeypatch.setattr(config.settings, "poc_discord_sreesanth", "300")
         assert get_user_role(300) == Role.ADMIN
 
     def test_owner_role(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from src import config
+        from hrcc_bot import config
         monkeypatch.setattr(config.settings, "owner_discord_id", "400")
         assert get_user_role(400) == Role.OWNER
 
@@ -150,7 +150,7 @@ class TestAdminExport:
         assert rows == []
 
     def test_export_with_data(self) -> None:
-        from src.db import upsert_ambassador_profile, award_points
+        from hrcc_bot.core.db import upsert_ambassador_profile, award_points
         upsert_ambassador_profile(ambassador_id=800, ambassador_name="ExportTest", college_name="MIT", country="US")
         create_hrw_link(discord_id=800, hrw_user_id="hrw_800", hrw_email="export@test.com")
         award_points(ambassador_id=800, ambassador_name="ExportTest", points_delta=100, action_type="CONTEST_HOSTED")
@@ -167,7 +167,7 @@ class TestAllTickets:
         assert get_all_tickets() == []
 
     def test_returns_tickets(self) -> None:
-        from src.db import create_ticket
+        from hrcc_bot.core.db import create_ticket
         create_ticket(channel_id=1, message_id=1, author_id=1, author_name="A",
                        category="TECH", urgency="P1", poc_name="sreesanth")
         tickets = get_all_tickets()

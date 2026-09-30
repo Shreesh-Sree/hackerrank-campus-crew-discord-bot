@@ -6,8 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from src.hrw_api import find_hrw_user_by_email, verify_test_ownership
-from src.rubrics import extract_participant_count
+from hrcc_bot.services.hrw_api import find_hrw_user_by_email, verify_test_ownership
+from hrcc_bot.pipeline.rubrics import extract_participant_count
 
 log = logging.getLogger("hrcc.verify_emails")
 

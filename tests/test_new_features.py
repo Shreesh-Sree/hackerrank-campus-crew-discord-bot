@@ -7,8 +7,8 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.csv_validator import build_summary_embed, parse_contest_csv
-from src.db import (
+from hrcc_bot.services.csv_validator import build_summary_embed, parse_contest_csv
+from hrcc_bot.core.db import (
     _fetchall,
     award_points,
     check_and_grant_achievements,
@@ -26,13 +26,13 @@ from src.db import (
     update_ticket_status,
     upsert_ambassador_profile,
 )
-from src.prompts.template_manager import get_template_manager
-from src.vision import is_image_attachment
+from hrcc_bot.pipeline.prompts.template_manager import get_template_manager
+from hrcc_bot.pipeline.vision import is_image_attachment
 
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     test_db = tmp_path / "test.db"
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", test_db)
@@ -114,7 +114,7 @@ class TestFiveMonthStreak:
                 event_name=f"Event M{month}", participant_count=100,
             )
             # Manually backdate the created_at for testing
-            from src.db import _execute
+            from hrcc_bot.core.db import _execute
             _execute(
                 "UPDATE ambassador_events SET created_at=? WHERE event_name=?",
                 (f"2026-{month:02d}-15T10:00:00+00:00", f"Event M{month}"),
@@ -130,7 +130,7 @@ class TestFiveMonthStreak:
                 ambassador_id=51, ambassador_name="Gapper",
                 event_name=f"Event M{month}", participant_count=100,
             )
-            from src.db import _execute
+            from hrcc_bot.core.db import _execute
             _execute(
                 "UPDATE ambassador_events SET created_at=? WHERE event_name=?",
                 (f"2026-{month:02d}-15T10:00:00+00:00", f"Event M{month}"),
@@ -195,7 +195,7 @@ class TestP0FirstResponder:
 
 class TestQuizQuestions:
     def test_quiz_has_5_questions(self) -> None:
-        from src.slash_commands import QUIZ_QUESTIONS
+        from hrcc_bot.bot.commands import QUIZ_QUESTIONS
         assert len(QUIZ_QUESTIONS) == 5
         for q in QUIZ_QUESTIONS:
             assert "q" in q
@@ -204,7 +204,7 @@ class TestQuizQuestions:
             assert 0 <= q["answer"] < len(q["options"])
 
     def test_quiz_answers_correct(self) -> None:
-        from src.slash_commands import QUIZ_QUESTIONS
+        from hrcc_bot.bot.commands import QUIZ_QUESTIONS
         assert QUIZ_QUESTIONS[0]["options"][QUIZ_QUESTIONS[0]["answer"]] == "Chakra"
         assert QUIZ_QUESTIONS[1]["options"][QUIZ_QUESTIONS[1]["answer"]] == "No, never"
         assert QUIZ_QUESTIONS[2]["options"][QUIZ_QUESTIONS[2]["answer"]] == "300 participants"

@@ -10,3 +10,6 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 .env.container
+*.egg-info/
+build/
+dist/

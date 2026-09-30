@@ -7,12 +7,12 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.db import close_db, get_ticket_stats, init_db, record_event_submission, create_ticket
+from hrcc_bot.core.db import close_db, get_ticket_stats, init_db, record_event_submission, create_ticket
 
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     test_db = tmp_path / "test.db"
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", test_db)
@@ -25,7 +25,7 @@ def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 class TestSchedulerMetrics:
     def test_get_all_month_stats_empty(self) -> None:
-        from src.scheduler import _get_all_month_stats
+        from hrcc_bot.services.scheduler import _get_all_month_stats
         stats = _get_all_month_stats()
         assert stats["total_events"] == 0
         assert stats["total_participants"] == 0
@@ -41,7 +41,7 @@ class TestSchedulerMetrics:
             ambassador_id=2, ambassador_name="B", event_name="E2",
             participant_count=100, reward_tier="Standard", merch_eligible=False,
         )
-        from src.scheduler import _get_all_month_stats
+        from hrcc_bot.services.scheduler import _get_all_month_stats
         stats = _get_all_month_stats()
         assert stats["total_events"] == 2
         assert stats["total_participants"] == 450
@@ -56,7 +56,7 @@ class TestSchedulerMetrics:
             channel_id=2, message_id=2, author_id=2, author_name="B",
             category="OPS", urgency="P2", poc_name="sanskruti",
         )
-        from src.scheduler import _get_all_month_stats
+        from hrcc_bot.services.scheduler import _get_all_month_stats
         stats = _get_all_month_stats()
         assert stats["tickets"]["PENDING"] == 2
         assert stats["tickets"]["total"] == 2
@@ -64,7 +64,7 @@ class TestSchedulerMetrics:
 
 class TestCertificatePreview:
     def test_generates_valid_png(self) -> None:
-        from src.cert_generator import generate_certificate_preview
+        from hrcc_bot.services.cert_generator import generate_certificate_preview
         data = generate_certificate_preview(
             name="Aarav Patel",
             college_name="IIT Madras",
@@ -77,13 +77,13 @@ class TestCertificatePreview:
         assert data[:8] == b"\x89PNG\r\n\x1a\n"
 
     def test_minimal_fields(self) -> None:
-        from src.cert_generator import generate_certificate_preview
+        from hrcc_bot.services.cert_generator import generate_certificate_preview
         data = generate_certificate_preview(name="Test User")
         assert isinstance(data, bytes)
         assert data[:4] == b"\x89PNG"
 
     def test_all_ranks(self) -> None:
-        from src.cert_generator import generate_certificate_preview
+        from hrcc_bot.services.cert_generator import generate_certificate_preview
         for rank in (1, 2, 3, 10, 100):
             data = generate_certificate_preview(name=f"Rank{rank}", rank=rank)
             assert len(data) > 500
@@ -91,6 +91,6 @@ class TestCertificatePreview:
 
 class TestEventWindowQuery:
     def test_events_in_window(self) -> None:
-        from src.scheduler import _get_events_in_window
+        from hrcc_bot.services.scheduler import _get_events_in_window
         events = _get_events_in_window(-100, 100)
         assert isinstance(events, list)

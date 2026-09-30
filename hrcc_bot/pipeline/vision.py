@@ -6,9 +6,9 @@ from typing import Any
 
 import httpx
 
-from src.config import settings
-from src.prompts.template_manager import get_template_manager
-from src.rubrics import scrub_secrets
+from hrcc_bot.config import settings
+from hrcc_bot.pipeline.prompts.template_manager import get_template_manager
+from hrcc_bot.pipeline.rubrics import scrub_secrets
 
 log = logging.getLogger("hrcc.vision")
 

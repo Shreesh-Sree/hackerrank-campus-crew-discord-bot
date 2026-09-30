@@ -5,8 +5,8 @@ import os
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.escalation import CATEGORY_MAP, _classify_urgency
-from src.troubleshoot import NODES, TroubleshootView
+from hrcc_bot.services.escalation import CATEGORY_MAP, _classify_urgency
+from hrcc_bot.bot.troubleshoot import NODES, TroubleshootView
 
 
 def _reachable(start: str = "root") -> set[str]:

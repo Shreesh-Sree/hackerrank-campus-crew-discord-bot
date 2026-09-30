@@ -404,50 +404,58 @@ Jinja2 template system with `FileSystemLoader` and `trim_blocks`:
 
 ```
 hrcc_bot/
-├── bot.py                              # Entry point — lifecycle, message handling, background tasks
-├── README.md
-├── CLAUDE.md
-├── knowledge_data.yaml                 # Canonical handbook rules (YAML knowledge tree)
-│
-├── src/
+├── hrcc_bot/                           # Application package — run with `python -m hrcc_bot`
+│   ├── __main__.py                     # Entry point
+│   ├── app.py                          # Discord client — lifecycle, message handling, background loops
 │   ├── config.py                       # Pydantic Settings — all env vars
-│   ├── auth_gate.py                    # 5-tier RBAC — role resolver, @require_role, gate check
-│   ├── hrw_api.py                      # HackerRank for Work API v3 client
-│   ├── graph.py                        # 6-node LangGraph ReAct pipeline
-│   ├── tools.py                        # 5 @tool functions for autonomous actions
-│   ├── llm_client.py                   # LangChain ChatOpenAI wrappers for vLLM
-│   ├── knowledge.py                    # RAG retriever with hot-reload
-│   ├── rubrics.py                      # 7-rubric classifier and safety engine
-│   ├── vision.py                       # Multimodal screenshot analyzer
-│   ├── db.py                           # Dual PostgreSQL/SQLite — 11 tables, migrations
-│   ├── context.py                      # Persistent conversation memory (LRU + SQLite)
-│   ├── csv_validator.py                # CSV/XLSX parser, Canva exporter, analytics, auto-report
-│   ├── cert_generator.py               # Pillow-based certificate preview renderer
-│   ├── escalation.py                   # Ticket creation + POC DM dispatch
-│   ├── escalation_views.py             # Interactive buttons (Acknowledge/Reply/Resolve modals)
-│   ├── incident_cluster.py             # Error storm deduplication engine
-│   ├── scheduler.py                    # Reminders, weekly digest, compliance nudges
-│   ├── health.py                       # Per-engine inference probes + outage alerting
-│   ├── channels.py                     # Per-channel reply modes (proactive / mention-only / broadcast-only)
-│   ├── troubleshoot.py                 # /troubleshoot decision trees
-│   ├── letter_service.py               # Permission/offer letter PDF generation
-│   ├── letter_views.py                 # Letter approval buttons for leads
-│   ├── verify_emails.py                # Bulk winner email verification against HRW
-│   ├── audit_log.py                    # Audit log queries, search, CSV export
-│   ├── slash_commands.py               # 54 slash commands across 5 role tiers
-│   └── prompts/
-│       ├── template_manager.py         # Jinja2 template engine (singleton)
-│       └── templates/                  # 7 .jinja prompt files
-│
-├── references/                         # Official handbook, SOPs, templates, FAQs (4 docs)
+│   ├── paths.py                        # Repo-root-anchored paths (data/, knowledge/, .env)
+│   ├── core/                           # Infrastructure
+│   │   ├── db.py                       # Dual PostgreSQL/SQLite — 12 tables, migrations, failover
+│   │   ├── llm_client.py               # vLLM → NIM/Ollama failover (ResilientChatModel)
+│   │   ├── health.py                   # Per-engine inference probes + outage alerting
+│   │   └── audit_log.py                # Audit log queries, search, CSV export
+│   ├── pipeline/                       # Natural-language pipeline
+│   │   ├── graph.py                    # 6-node LangGraph ReAct pipeline
+│   │   ├── rubrics.py                  # 7-rubric classifier and safety engine
+│   │   ├── knowledge.py                # Vector-less RAG with hot-reload
+│   │   ├── tools.py                    # 5 @tool functions for autonomous actions
+│   │   ├── context.py                  # Persistent conversation memory (LRU + DB)
+│   │   ├── vision.py                   # Multimodal screenshot analyzer
+│   │   ├── incident_cluster.py         # Error storm deduplication engine
+│   │   └── prompts/                    # Jinja2 template engine + 7 .jinja prompts
+│   ├── services/                       # Domain logic
+│   │   ├── escalation.py               # Ticket creation, cooldown/dedup, POC DM dispatch
+│   │   ├── hrw_api.py                  # HackerRank for Work API v3 client
+│   │   ├── csv_validator.py            # CSV/XLSX parser, Canva exporter, analytics, auto-report
+│   │   ├── cert_generator.py           # Pillow-based certificate preview renderer
+│   │   ├── letter_service.py           # Permission/offer letter PDF generation
+│   │   ├── verify_emails.py            # Bulk winner email verification against HRW
+│   │   └── scheduler.py                # Reminders, weekly digest, compliance nudges
+│   └── bot/                            # Discord surface
+│       ├── commands.py                 # 54 slash commands across 5 role tiers
+│       ├── auth_gate.py                # 5-tier RBAC — role resolver, @require_role, gate check
+│       ├── channels.py                 # Per-channel reply modes
+│       ├── escalation_views.py         # Confirm Dispatch + Acknowledge/Reply/Resolve buttons
+│       ├── letter_views.py             # Letter approval buttons for leads
+│       └── troubleshoot.py             # /troubleshoot decision trees
+├── knowledge/
+│   ├── knowledge_data.yaml             # Canonical handbook rules (YAML knowledge tree)
+│   └── references/                     # Official handbook, SOPs, templates, FAQs (4 docs)
 ├── tests/                              # 374 tests across 22 test files
 ├── deploy/
-│   ├── deploy.sh                       # Automated pull → install → test → restart
-│   ├── hrcc-bot.service                # Systemd service unit
-│   ├── requirements.txt                # Pinned dependencies (14 packages)
-│   └── .env.example                    # Full configuration template
+│   ├── deploy.sh                       # Automated pull → install → test → restart (systemd)
+│   ├── podman-deploy.sh                # Container build + Postgres stack
+│   └── hrcc-bot.service                # Systemd service unit
+├── docs/
+│   ├── architecture/                   # Design specs (pipeline, rubrics, escalation, services)
+│   ├── operations/                     # Deployment guide
+│   └── legal/                          # Privacy policy, terms of service
 ├── data/                               # SQLite database (gitignored)
-└── docs/                               # 13 architecture specs and design documents
+├── Containerfile, podman-compose.yml   # Container build + stack
+├── pyproject.toml                      # Package metadata + pytest config
+├── requirements.txt                    # Runtime dependencies
+├── requirements-dev.txt                # + test dependencies
+└── .env.example                        # Full configuration template
 ```
 
 ---
@@ -458,15 +466,15 @@ hrcc_bot/
 # Clone and configure
 git clone <repo-url> && cd hrcc_bot
 python3 -m venv venv && source venv/bin/activate
-pip install -r deploy/requirements.txt
-cp deploy/.env.example .env
+pip install -r requirements-dev.txt
+cp .env.example .env
 # Edit .env: DISCORD_BOT_TOKEN, HRW_API_KEY, OWNER_DISCORD_ID, POC IDs
 
 # Run
-python bot.py
+python -m hrcc_bot
 
 # Test
-DISCORD_BOT_TOKEN=test pytest tests/ -v
+python -m pytest
 
 # Deploy (production)
 chmod +x deploy/deploy.sh

@@ -7,7 +7,7 @@ import httpx
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.health import EngineProbe, HealthMonitor, ProbeResult, format_alert, probe_engine
+from hrcc_bot.core.health import EngineProbe, HealthMonitor, ProbeResult, format_alert, probe_engine
 
 
 def _probe(handler, engine: EngineProbe) -> ProbeResult:

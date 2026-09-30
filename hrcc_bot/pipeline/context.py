@@ -3,7 +3,7 @@ from __future__ import annotations
 import collections
 import logging
 
-from src.config import settings
+from hrcc_bot.config import settings
 
 log = logging.getLogger("hrcc.context")
 
@@ -54,14 +54,14 @@ class ConversationMemory:
 
     def _persist(self, user_id: int, role: str, content: str) -> None:
         try:
-            from src.db import save_conversation_turn
+            from hrcc_bot.core.db import save_conversation_turn
             save_conversation_turn(user_id, role, content)
         except Exception:
             log.debug("DB persistence unavailable, using in-memory only")
 
     def _load_from_db(self, user_id: int) -> list[dict[str, str]]:
         try:
-            from src.db import get_conversation_turns
+            from hrcc_bot.core.db import get_conversation_turns
             turns = get_conversation_turns(user_id, limit=self._max_messages())
             if turns:
                 self._store[user_id] = turns

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hrcc-bot"
+version = "1.0.0"
+description = "HackerRank Campus Crew Discord support agent"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.scripts]
+hrcc-bot = "hrcc_bot.app:main"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["hrcc_bot*"]
+
+[tool.setuptools.package-data]
+"hrcc_bot.pipeline.prompts" = ["templates/*.jinja"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore:'audioop' is deprecated:DeprecationWarning"]

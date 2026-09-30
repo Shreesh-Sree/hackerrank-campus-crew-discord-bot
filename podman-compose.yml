@@ -34,8 +34,7 @@ services:
         condition: service_healthy
     volumes:
       - hrcc_data:/app/data
-      - ./references:/app/references:ro
-      - ./knowledge_data.yaml:/app/knowledge_data.yaml:ro
+      - ./knowledge:/app/knowledge:ro
     network_mode: host
 
 volumes:

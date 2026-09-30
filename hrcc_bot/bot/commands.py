@@ -9,16 +9,16 @@ from discord import app_commands, ui
 
 import re
 
-from src.channels import announcement_channel_ids, support_channel_ids
-from src.config import settings
-from src.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
+from hrcc_bot.bot.channels import announcement_channel_ids, support_channel_ids
+from hrcc_bot.config import settings
+from hrcc_bot.services.csv_validator import build_canva_file, build_summary_embed, parse_contest_csv
 from datetime import datetime, timezone
-from src.letter_service import generate_permission_letter_pdf, generate_offer_letter_pdf
-from src.letter_views import LetterApprovalView
+from hrcc_bot.services.letter_service import generate_permission_letter_pdf, generate_offer_letter_pdf
+from hrcc_bot.bot.letter_views import LetterApprovalView
 import os
 
-from src.auth_gate import Role, get_user_role
-from src.db import (
+from hrcc_bot.bot.auth_gate import Role, get_user_role
+from hrcc_bot.core.db import (
     ACHIEVEMENT_DEFS,
     add_support_notice,
     deactivate_support_notice,
@@ -57,15 +57,15 @@ from src.db import (
     update_collab_status,
     upsert_ambassador_profile,
 )
-from src.escalation import _get_poc_id, _send_poc_dm, format_outcome, open_escalation
-from src.troubleshoot import NODES, TroubleshootView, build_embed as build_troubleshoot_embed
-from src.hrw_api import get_questions_by_test, verify_test_ownership
-from src.verify_emails import (
+from hrcc_bot.services.escalation import _get_poc_id, _send_poc_dm, format_outcome, open_escalation
+from hrcc_bot.bot.troubleshoot import NODES, TroubleshootView, build_embed as build_troubleshoot_embed
+from hrcc_bot.services.hrw_api import get_questions_by_test, verify_test_ownership
+from hrcc_bot.services.verify_emails import (
     EmailVerifier,
     generate_verification_report,
     run_full_verification,
 )
-from src.audit_log import (
+from hrcc_bot.core.audit_log import (
     export_audit_logs_to_csv,
     get_audit_log_summary,
     get_ticket_audit_trail,
@@ -361,7 +361,7 @@ def _ticket_status_embed(ticket_code: str) -> discord.Embed:
 
 async def _dm_all_ambassadors(client: discord.Client, text: str) -> tuple[int, int]:
     """DM every HRW-linked ambassador; returns (delivered, total)."""
-    from src.db import _fetchall
+    from hrcc_bot.core.db import _fetchall
     links = _fetchall("SELECT discord_id FROM hrw_links")
     sent = 0
     for link in links:
@@ -465,7 +465,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             return
 
         await interaction.response.defer()
-        from src.scheduler import _get_all_month_stats
+        from hrcc_bot.services.scheduler import _get_all_month_stats
         stats = _get_all_month_stats()
 
         from datetime import datetime, timezone
@@ -610,7 +610,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         app_commands.Choice(name="HackerRank SkillUp", value="skillup"),
     ])
     async def rules_cmd(interaction: discord.Interaction, platform: app_commands.Choice[str]) -> None:
-        from src.knowledge import get_platform_info
+        from hrcc_bot.pipeline.knowledge import get_platform_info
         info = get_platform_info(platform.value)
         name = info.get("name", platform.name)
         url = info.get("url", "")
@@ -1352,8 +1352,8 @@ def register_commands(tree: app_commands.CommandTree) -> None:
     ) -> None:
         await interaction.response.defer()
 
-        from src.prompts.template_manager import get_template_manager
-        from src.llm_client import get_llm
+        from hrcc_bot.pipeline.prompts.template_manager import get_template_manager
+        from hrcc_bot.core.llm_client import get_llm
 
         tm = get_template_manager()
         prompt = tm.render_template(
@@ -1387,7 +1387,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         if college_name:
             embed.add_field(name="College", value=college_name, inline=True)
 
-        from src.rubrics import chunk_message
+        from hrcc_bot.pipeline.rubrics import chunk_message
         chunks = chunk_message(blueprint, limit=1024)
         for i, chunk in enumerate(chunks[:4]):
             name = "Blueprint" if i == 0 else f"Blueprint (cont. {i+1})"
@@ -1411,7 +1411,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         async def on_submit(self, interaction: discord.Interaction) -> None:
             await interaction.response.defer()
 
-            from src.db import record_event_submission as _record, upsert_ambassador_profile as _upsert
+            from hrcc_bot.core.db import record_event_submission as _record, upsert_ambassador_profile as _upsert
             _upsert(
                 ambassador_id=interaction.user.id,
                 ambassador_name=interaction.user.display_name,
@@ -1426,8 +1426,8 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             profile = get_ambassador_profile(interaction.user.id)
             college = profile["college_name"] if profile and profile.get("college_name") else ""
 
-            from src.prompts.template_manager import get_template_manager
-            from src.llm_client import get_llm
+            from hrcc_bot.pipeline.prompts.template_manager import get_template_manager
+            from hrcc_bot.core.llm_client import get_llm
             tm = get_template_manager()
             prompt = tm.render_template(
                 "event_wizard",
@@ -1461,7 +1461,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             if expected:
                 embed.add_field(name="Expected", value=expected, inline=True)
 
-            from src.rubrics import chunk_message as _chunk
+            from hrcc_bot.pipeline.rubrics import chunk_message as _chunk
             chunks = _chunk(plan_text, limit=1024)
             for i, chunk in enumerate(chunks[:3]):
                 name = "Plan" if i == 0 else f"Plan (cont.)"
@@ -1502,7 +1502,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             merch = pcount >= 300
             tier = "Tier 300+" if merch else "Standard (< 300)"
 
-            from src.db import record_event_submission as _record, award_points as _award
+            from hrcc_bot.core.db import record_event_submission as _record, award_points as _award
             _record(
                 ambassador_id=interaction.user.id,
                 ambassador_name=interaction.user.display_name,
@@ -1579,7 +1579,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
                 )
                 if passed:
                     result_text += "**Passed!** +50 points awarded."
-                    from src.db import award_points as _award
+                    from hrcc_bot.core.db import award_points as _award
                     _award(
                         ambassador_id=self.user_id,
                         ambassador_name="",
@@ -1641,7 +1641,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
         my_events = get_ambassador_events(uid)
         my_pts = get_ambassador_points(uid)
 
-        from src.scheduler import _get_all_month_stats
+        from hrcc_bot.services.scheduler import _get_all_month_stats
         global_stats = _get_all_month_stats()
 
         all_ambassadors = get_global_leaderboard(limit=1000)
@@ -1742,7 +1742,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
                 )
                 return
 
-            from src.hrw_api import find_hrw_user_by_email
+            from hrcc_bot.services.hrw_api import find_hrw_user_by_email
             try:
                 hrw_user = await find_hrw_user_by_email(email)
             except Exception:
@@ -1853,7 +1853,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             await interaction.response.send_message("Moderator access required.", ephemeral=True)
             return
 
-        from src.db import get_inactive_ambassadors_this_month
+        from hrcc_bot.core.db import get_inactive_ambassadors_this_month
         inactive = get_inactive_ambassadors_this_month()
         stats = get_ticket_stats()
 
@@ -2093,7 +2093,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
             return
 
         await interaction.response.defer(ephemeral=True)
-        from src.hrw_api import get_tests, get_hrw_users, get_questions
+        from hrcc_bot.services.hrw_api import get_tests, get_hrw_users, get_questions
         try:
             tests = await get_tests(limit=1)
             users = await get_hrw_users(limit=1)
@@ -2121,7 +2121,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
 
         await interaction.response.defer(ephemeral=True)
 
-        from src.hrw_api import get_tests_for_owner
+        from hrcc_bot.services.hrw_api import get_tests_for_owner
         try:
             tests = await get_tests_for_owner(link["hrw_user_id"])
         except Exception:
@@ -2164,7 +2164,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
 
         await interaction.response.defer(ephemeral=True)
 
-        from src.hrw_api import verify_test_ownership, get_test, get_test_candidates
+        from hrcc_bot.services.hrw_api import verify_test_ownership, get_test, get_test_candidates
         if not await verify_test_ownership(test_id, link["hrw_user_id"]):
             role = get_user_role(interaction.user.id)
             if role < Role.ADMIN:
@@ -2222,7 +2222,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
     ) -> None:
         await interaction.response.defer()
 
-        from src.hrw_api import get_questions
+        from hrcc_bot.services.hrw_api import get_questions
         q_type = question_type.value if question_type else ""
         offset = (max(page, 1) - 1) * 20
 
@@ -2269,7 +2269,7 @@ def register_commands(tree: app_commands.CommandTree) -> None:
 
         await interaction.response.defer(ephemeral=True)
 
-        from src.hrw_api import verify_test_ownership, get_test
+        from hrcc_bot.services.hrw_api import verify_test_ownership, get_test
         if not await verify_test_ownership(test_id, link["hrw_user_id"]):
             role = get_user_role(interaction.user.id)
             if role < Role.ADMIN:

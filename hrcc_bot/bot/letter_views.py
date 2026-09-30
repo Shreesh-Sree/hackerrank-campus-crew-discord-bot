@@ -9,8 +9,8 @@ from discord import ui
 import json
 import os
 
-from src.db import get_ticket, update_ticket_status
-from src.letter_service import generate_permission_letter_pdf, generate_offer_letter_pdf
+from hrcc_bot.core.db import get_ticket, update_ticket_status
+from hrcc_bot.services.letter_service import generate_permission_letter_pdf, generate_offer_letter_pdf
 
 log = logging.getLogger("hrcc.letter_views")
 

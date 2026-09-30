@@ -6,8 +6,8 @@ from typing import Any
 
 import discord
 
-from src.config import settings
-from src.db import create_ticket, get_recent_tickets
+from hrcc_bot.config import settings
+from hrcc_bot.core.db import create_ticket, get_recent_tickets
 
 log = logging.getLogger("hrcc.escalation")
 
@@ -128,7 +128,7 @@ async def open_escalation(
         description=description,
     )
 
-    from src.db import log_audit
+    from hrcc_bot.core.db import log_audit
     log_audit(
         actor_id=author_id, actor_name=author_name,
         action="ESCALATE", details=f"{ticket['ticket_code']} {urgency} -> {lead_key}",
@@ -201,7 +201,7 @@ async def _send_poc_dm(client: discord.Client, ticket: dict[str, Any]) -> bool:
     embed.add_field(name="Issue", value=ticket["description"][:1024] or "No description", inline=False)
     embed.set_footer(text=f"Channel ID: {ticket['channel_id']} | Message ID: {ticket['message_id']}")
 
-    from src.escalation_views import TicketActionView
+    from hrcc_bot.bot.escalation_views import TicketActionView
     view = TicketActionView(ticket_code=ticket["ticket_code"])
 
     try:

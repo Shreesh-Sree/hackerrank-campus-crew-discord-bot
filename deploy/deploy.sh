@@ -22,10 +22,10 @@ fi
 source "$VENV_DIR/bin/activate"
 
 echo "[3/6] Installing dependencies..."
-pip install -r deploy/requirements.txt -q
+pip install -r requirements-dev.txt -q
 
 echo "[4/6] Running test suite..."
-DISCORD_BOT_TOKEN=test python -m pytest tests/ -q
+python -m pytest
 echo ""
 
 echo "[5/6] Installing systemd service..."

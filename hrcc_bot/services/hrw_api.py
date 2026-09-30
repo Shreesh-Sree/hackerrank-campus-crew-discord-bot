@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from src.config import settings
+from hrcc_bot.config import settings
 
 log = logging.getLogger("hrcc.hrw_api")
 

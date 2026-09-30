@@ -18,7 +18,7 @@ class TestE2EEmailVerificationWorkflow:
 
         This tests the full flow an ambassador would experience after hosting a contest.
         """
-        from src.verify_emails import (
+        from hrcc_bot.services.verify_emails import (
             run_full_verification,
             validate_canva_csv_schema,
             generate_verification_report,
@@ -41,7 +41,7 @@ class TestE2EEmailVerificationWorkflow:
         assert len(warnings) == 0
 
         # Step 3: Mock HRW API responses - all emails match
-        with mock.patch("src.verify_emails.find_hrw_user_by_email") as mock_find:
+        with mock.patch("hrcc_bot.services.verify_emails.find_hrw_user_by_email") as mock_find:
             def mock_find_side_effect(email):
                 email_lower = email.lower()
                 if "iitd" in email_lower:
@@ -84,14 +84,14 @@ class TestE2EHRWAPIWorkflow:
 
         This tests the complete HRW platform integration flow.
         """
-        from src.hrw_api import (
+        from hrcc_bot.services.hrw_api import (
             get_questions_by_test,
             verify_test_ownership,
         )
         import unittest.mock as mock
 
         # Test 1: No HRW API key configured
-        import src.config as config_mod
+        import hrcc_bot.config as config_mod
         original_key = config_mod.settings.hrw_api_key
         config_mod.settings.hrw_api_key = ""
 
@@ -101,15 +101,15 @@ class TestE2EHRWAPIWorkflow:
         # Test 2: HRW API key configured - mock successful ownership verification
         config_mod.settings.hrw_api_key = "test-api-key"
 
-        with mock.patch("src.hrw_api.get_test") as mock_get_test:
+        with mock.patch("hrcc_bot.services.hrw_api.get_test") as mock_get_test:
             mock_get_test.return_value = {"id": "test-123", "owner": "user-456"}
 
             result = asyncio.run(verify_test_ownership("test-123", "user-456"))
             assert result is True
 
         # Test 3: Mock question browsing
-        with mock.patch("src.hrw_api.get_test") as mock_get_test:
-            with mock.patch("src.hrw_api.get_questions") as mock_get_q:
+        with mock.patch("hrcc_bot.services.hrw_api.get_test") as mock_get_test:
+            with mock.patch("hrcc_bot.services.hrw_api.get_questions") as mock_get_q:
                 mock_get_test.return_value = {"id": "test-123"}
                 mock_get_q.return_value = {
                     "data": [
@@ -132,7 +132,7 @@ class TestE2ESchemaValidation:
 
     def test_valid_canva_schema(self):
         """Test valid Canva CSV with all required fields."""
-        from src.verify_emails import validate_canva_csv_schema
+        from hrcc_bot.services.verify_emails import validate_canva_csv_schema
 
         csv_content = (
             "Name,Email Address,College Name,Event Name,Date,Rank,Score\n"
@@ -145,7 +145,7 @@ class TestE2ESchemaValidation:
 
     def test_missing_required_column(self):
         """Test CSV with missing required column."""
-        from src.verify_emails import validate_canva_csv_schema
+        from hrcc_bot.services.verify_emails import validate_canva_csv_schema
 
         csv_content = "Name,Email\nAlice,alice@example.com"
 
@@ -155,7 +155,7 @@ class TestE2ESchemaValidation:
 
     def test_invalid_rank_value(self):
         """Test CSV with invalid rank values."""
-        from src.verify_emails import validate_canva_csv_schema
+        from hrcc_bot.services.verify_emails import validate_canva_csv_schema
 
         csv_content = (
             "Name,Email Address,College Name,Event Name,Date,Rank,Score\n"
@@ -168,7 +168,7 @@ class TestE2ESchemaValidation:
 
     def test_empty_data_rows(self):
         """Test CSV with header but no data rows."""
-        from src.verify_emails import validate_canva_csv_schema
+        from hrcc_bot.services.verify_emails import validate_canva_csv_schema
 
         csv_content = "Name,Email Address,College Name,Event Name,Date,Rank,Score"
 
@@ -178,7 +178,7 @@ class TestE2ESchemaValidation:
 
     def test_encoding_error(self):
         """Test CSV with invalid UTF-8 encoding."""
-        from src.verify_emails import validate_canva_csv_schema
+        from hrcc_bot.services.verify_emails import validate_canva_csv_schema
 
         csv_content = b"\xff\xfeName,Email\nAlice,alice@example.com"
 
@@ -192,7 +192,7 @@ class TestE2EReportGeneration:
 
     def test_report_with_details(self):
         """Test generating detailed verification report."""
-        from src.verify_emails import EmailVerificationResult, generate_verification_report
+        from hrcc_bot.services.verify_emails import EmailVerificationResult, generate_verification_report
 
         results = [
             EmailVerificationResult(
@@ -217,7 +217,7 @@ class TestE2EReportGeneration:
 
     def test_report_empty(self):
         """Test generating empty verification report."""
-        from src.verify_emails import generate_verification_report
+        from hrcc_bot.services.verify_emails import generate_verification_report
 
         report = generate_verification_report([])
 

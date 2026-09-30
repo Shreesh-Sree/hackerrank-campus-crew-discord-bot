@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from src.db import _fetchone, _execute, _ph, _p, init_db
+from hrcc_bot.core.db import _fetchone, _execute, _ph, _p, init_db
 
 log = logging.getLogger("hrcc.audit")
 

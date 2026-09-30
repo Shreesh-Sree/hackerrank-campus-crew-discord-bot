@@ -8,17 +8,15 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY deploy/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py .
-COPY knowledge_data.yaml .
-COPY src/ src/
-COPY references/ references/
+COPY hrcc_bot/ hrcc_bot/
+COPY knowledge/ knowledge/
 
 RUN mkdir -p data
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-CMD ["python", "bot.py"]
+CMD ["python", "-m", "hrcc_bot"]

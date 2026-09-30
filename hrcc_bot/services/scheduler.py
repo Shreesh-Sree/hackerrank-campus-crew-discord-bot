@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands, tasks
 
-from src.config import settings
-from src.db import get_events_in_window, get_inactive_ambassadors_this_month, get_monthly_stats
+from hrcc_bot.config import settings
+from hrcc_bot.core.db import get_events_in_window, get_inactive_ambassadors_this_month, get_monthly_stats
 
 log = logging.getLogger("hrcc.scheduler")
 
@@ -227,7 +227,7 @@ class SchedulerCog(commands.Cog):
                 await self._dm_user(int(poc_id), embed=embed)
 
     def _localize_note(self, ambassador_id: int) -> str:
-        from src.db import get_ambassador_profile
+        from hrcc_bot.core.db import get_ambassador_profile
         profile = get_ambassador_profile(ambassador_id)
         if profile and profile.get("timezone_str") and profile["timezone_str"] != "UTC":
             return f"\n*Your timezone: {profile['timezone_str']}*"

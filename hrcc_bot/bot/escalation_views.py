@@ -5,7 +5,7 @@ import logging
 import discord
 from discord import ui
 
-from src.db import get_ticket, update_ticket_status
+from hrcc_bot.core.db import get_ticket, update_ticket_status
 
 log = logging.getLogger("hrcc.escalation_views")
 
@@ -217,7 +217,7 @@ class ConfirmDispatchView(ui.View):
 
     @ui.button(label="Confirm Dispatch", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: ui.Button) -> None:
-        from src.escalation import format_outcome, open_escalation
+        from hrcc_bot.services.escalation import format_outcome, open_escalation
 
         self._disable_all()
         button.label = "Dispatched"

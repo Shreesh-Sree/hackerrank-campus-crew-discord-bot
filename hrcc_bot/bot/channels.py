@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from src.config import settings
+from hrcc_bot.config import settings
 
 
 class ChannelMode(str, Enum):

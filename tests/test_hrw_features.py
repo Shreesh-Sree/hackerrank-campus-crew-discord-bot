@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.db import (
+from hrcc_bot.core.db import (
     close_db,
     create_showcase,
     get_recent_showcases,
@@ -28,7 +28,7 @@ from src.db import (
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     test_db = tmp_path / "test.db"
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", test_db)
@@ -140,10 +140,10 @@ class TestTrendsData:
 
 class TestHRWApiModule:
     def test_base_url_set(self) -> None:
-        from src.hrw_api import _BASE_URL
+        from hrcc_bot.services.hrw_api import _BASE_URL
         assert "hackerrank.com" in _BASE_URL
 
     def test_headers_function(self) -> None:
-        from src.hrw_api import _headers
+        from hrcc_bot.services.hrw_api import _headers
         h = _headers()
         assert "Authorization" in h

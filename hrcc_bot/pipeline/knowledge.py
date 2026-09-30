@@ -4,16 +4,16 @@ import logging
 import os
 import re
 import time
-from pathlib import Path
 from typing import Any
 
 import yaml
 
+from hrcc_bot.paths import KNOWLEDGE_FILE, REFERENCES_DIR
+
 log = logging.getLogger("hrcc.knowledge")
 
-_ROOT = Path(__file__).resolve().parent.parent
-_KNOWLEDGE_FILE = _ROOT / "knowledge_data.yaml"
-_REFERENCES_DIR = _ROOT / "references"
+_KNOWLEDGE_FILE = KNOWLEDGE_FILE
+_REFERENCES_DIR = REFERENCES_DIR
 
 _knowledge: dict[str, Any] | None = None
 _reference_docs: dict[str, str] = {}
@@ -182,7 +182,7 @@ def get_certificate_info() -> dict[str, Any]:
 
 
 def _support_notice_section() -> str:
-    from src.db import get_active_support_notices
+    from hrcc_bot.core.db import get_active_support_notices
 
     notices = get_active_support_notices()
     if not notices:

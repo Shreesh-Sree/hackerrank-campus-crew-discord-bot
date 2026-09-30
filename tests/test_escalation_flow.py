@@ -12,15 +12,15 @@ os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
 from langchain_core.messages import AIMessage
 
-from src.config import settings
-from src.db import _execute, close_db, create_ticket, get_recent_tickets, get_ticket_stats, init_db
-from src.escalation import EscalationOutcome, format_outcome, open_escalation, resolve_lead
-from src.graph import extract_escalation_request
+from hrcc_bot.config import settings
+from hrcc_bot.core.db import _execute, close_db, create_ticket, get_recent_tickets, get_ticket_stats, init_db
+from hrcc_bot.services.escalation import EscalationOutcome, format_outcome, open_escalation, resolve_lead
+from hrcc_bot.pipeline.graph import extract_escalation_request
 
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", tmp_path / "test.db")
     monkeypatch.setattr(db_mod, "_using_postgres", False)
@@ -188,7 +188,7 @@ class TestExtractEscalationRequest:
 
 class TestConfirmDispatchView:
     def test_other_users_cannot_confirm(self) -> None:
-        from src.escalation_views import ConfirmDispatchView
+        from hrcc_bot.bot.escalation_views import ConfirmDispatchView
 
         class _Resp:
             def __init__(self) -> None:

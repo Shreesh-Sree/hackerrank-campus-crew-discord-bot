@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.rubrics import (
+from hrcc_bot.pipeline.rubrics import (
     chunk_message,
     contains_chakra_reference,
     detect_escalation_target,
@@ -168,7 +168,7 @@ class TestPlatformAmbiguity:
         "Can I schedule the coding round for Friday?",
     ])
     def test_ambiguous(self, text: str) -> None:
-        from src.rubrics import is_platform_ambiguous
+        from hrcc_bot.pipeline.rubrics import is_platform_ambiguous
         assert is_platform_ambiguous(text)
 
     @pytest.mark.parametrize("text", [
@@ -179,11 +179,11 @@ class TestPlatformAmbiguity:
         "thanks, the test went great",
     ])
     def test_not_ambiguous(self, text: str) -> None:
-        from src.rubrics import is_platform_ambiguous
+        from hrcc_bot.pipeline.rubrics import is_platform_ambiguous
         assert not is_platform_ambiguous(text)
 
     def test_knowledge_node_adds_dual_track(self) -> None:
         import asyncio
-        from src.graph import knowledge_node
+        from hrcc_bot.pipeline.graph import knowledge_node
         out = asyncio.run(knowledge_node({"message_content": "How do I start the test?"}))
         assert "AMBIGUOUS PLATFORM" in out["knowledge_context"]

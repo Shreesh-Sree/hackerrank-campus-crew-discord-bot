@@ -14,5 +14,7 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 *.log
-deploy/deploy.sh
-CLAUDE.md
+deploy/
+bot.py
+requirements-dev.txt
+.env.example

@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.db import (
+from hrcc_bot.core.db import (
     _execute,
     add_support_notice,
     close_db,
@@ -15,12 +15,12 @@ from src.db import (
     get_active_support_notices,
     init_db,
 )
-from src.knowledge import build_context_block
+from hrcc_bot.pipeline.knowledge import build_context_block
 
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", tmp_path / "test.db")
     monkeypatch.setattr(db_mod, "_using_postgres", False)

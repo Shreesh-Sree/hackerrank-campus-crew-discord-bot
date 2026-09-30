@@ -18,7 +18,7 @@ class Node:
     ticket_summary: str = ""        # issue text used for the ticket (drives P0/P1/P2)
 
 
-# Decision trees grounded in references/troubleshooting_and_faqs.md and the
+# Decision trees grounded in knowledge/references/troubleshooting_and_faqs.md and the
 # handbook's Troubleshooting Manual. Edit wording here, not in the view code.
 NODES: dict[str, Node] = {
     "root": Node(
@@ -172,13 +172,13 @@ class _OptionButton(ui.Button["TroubleshootView"]):
 
 class _EscalateButton(ui.Button["TroubleshootView"]):
     def __init__(self, lead_key: str) -> None:
-        from src.escalation import POC_DISPLAY
+        from hrcc_bot.services.escalation import POC_DISPLAY
 
         super().__init__(label=f"Escalate to {POC_DISPLAY.get(lead_key, lead_key)}"[:80], style=discord.ButtonStyle.danger)
         self.lead_key = lead_key
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        from src.escalation import format_outcome, open_escalation
+        from hrcc_bot.services.escalation import format_outcome, open_escalation
 
         assert self.view is not None
         node = NODES[self.view.node_id]

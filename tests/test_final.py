@@ -8,14 +8,14 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.db import close_db, create_ticket, init_db
-from src.incident_cluster import IncidentClusterEngine
-from src.rubrics import scrub_secrets
+from hrcc_bot.core.db import close_db, create_ticket, init_db
+from hrcc_bot.pipeline.incident_cluster import IncidentClusterEngine
+from hrcc_bot.pipeline.rubrics import scrub_secrets
 
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     test_db = tmp_path / "test.db"
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", test_db)
@@ -114,7 +114,7 @@ class TestXlsxParsing:
         wb.save(buf)
         xlsx_bytes = buf.getvalue()
 
-        from src.csv_validator import parse_contest_csv
+        from hrcc_bot.services.csv_validator import parse_contest_csv
         result = parse_contest_csv(xlsx_bytes, event_name="Excel Test", filename="test.xlsx")
         assert result.active_participants == 1
         assert result.winners[0]["name"] == "Alice"
@@ -129,14 +129,14 @@ class TestXlsxParsing:
         buf = io.BytesIO()
         wb.save(buf)
 
-        from src.csv_validator import parse_contest_csv
+        from hrcc_bot.services.csv_validator import parse_contest_csv
         result = parse_contest_csv(buf.getvalue(), event_name="NoHint")
         assert result.active_participants >= 1
 
 
 class TestEscalateCommand:
     def test_urgency_classification_from_escalation(self) -> None:
-        from src.escalation import _classify_urgency
+        from hrcc_bot.services.escalation import _classify_urgency
         assert _classify_urgency("Contest is live and test link broken") == "P0"
         assert _classify_urgency("My welcome kit hasn't arrived") == "P2"
         assert _classify_urgency("HRW invitation pending for 3 days") == "P1"

@@ -12,11 +12,11 @@ class TestHRWAPI:
 
     def test_hrw_api_key_not_configured(self):
         """Test graceful handling when HRW API key is missing."""
-        import src.config as config_mod
+        import hrcc_bot.config as config_mod
         original_key = config_mod.settings.hrw_api_key
         config_mod.settings.hrw_api_key = ""
 
-        from src.hrw_api import get_questions_by_test
+        from hrcc_bot.services.hrw_api import get_questions_by_test
 
         questions = asyncio.run(get_questions_by_test("test-id"))
         assert questions == []
@@ -29,7 +29,7 @@ class TestEmailVerification:
 
     def test_validate_canva_csv_schema_valid(self):
         """Test validating a valid Canva CSV schema."""
-        from src.verify_emails import validate_canva_csv_schema
+        from hrcc_bot.services.verify_emails import validate_canva_csv_schema
 
         csv_content = (
             "Name,Email Address,College Name,Event Name,Date,Rank,Score\n"
@@ -44,7 +44,7 @@ class TestEmailVerification:
 
     def test_validate_canva_csv_schema_missing_columns(self):
         """Test validating CSV with missing required columns."""
-        from src.verify_emails import validate_canva_csv_schema
+        from hrcc_bot.services.verify_emails import validate_canva_csv_schema
 
         csv_content = "Name,Email\nAlice,alice@example.com"
 
@@ -55,7 +55,7 @@ class TestEmailVerification:
 
     def test_validate_canva_csv_schema_invalid_rank(self):
         """Test validating CSV with invalid rank values."""
-        from src.verify_emails import validate_canva_csv_schema
+        from hrcc_bot.services.verify_emails import validate_canva_csv_schema
 
         csv_content = (
             "Name,Email Address,College Name,Event Name,Date,Rank,Score\n"
@@ -70,7 +70,7 @@ class TestEmailVerification:
 
     def test_validate_canva_csv_schema_empty_file(self):
         """Test validating empty CSV file."""
-        from src.verify_emails import validate_canva_csv_schema
+        from hrcc_bot.services.verify_emails import validate_canva_csv_schema
 
         csv_content = "Name,Email Address,College Name,Event Name,Date,Rank,Score"
 
@@ -81,7 +81,7 @@ class TestEmailVerification:
 
     def test_validate_canva_csv_schema_encoding_error(self):
         """Test validating CSV with encoding issues."""
-        from src.verify_emails import validate_canva_csv_schema
+        from hrcc_bot.services.verify_emails import validate_canva_csv_schema
 
         # Invalid UTF-8 bytes
         csv_content = b"\xff\xfeName,Email\n"
@@ -97,7 +97,7 @@ class TestGenerateVerificationReport:
 
     def test_generate_verification_report_success(self):
         """Test generating a successful verification report."""
-        from src.verify_emails import EmailVerificationResult, generate_verification_report
+        from hrcc_bot.services.verify_emails import EmailVerificationResult, generate_verification_report
 
         results = [
             EmailVerificationResult(
@@ -122,7 +122,7 @@ class TestGenerateVerificationReport:
 
     def test_generate_verification_report_empty(self):
         """Test generating a report with no results."""
-        from src.verify_emails import generate_verification_report
+        from hrcc_bot.services.verify_emails import generate_verification_report
 
         report = generate_verification_report([])
 
@@ -134,7 +134,7 @@ class TestRunFullVerification:
 
     def test_run_full_verification_success(self):
         """Test complete verification pipeline with valid data."""
-        from src.verify_emails import run_full_verification
+        from hrcc_bot.services.verify_emails import run_full_verification
         import unittest.mock as mock
 
         csv_content = (
@@ -143,7 +143,7 @@ class TestRunFullVerification:
         )
 
         # Mock HRW API to return a matching user
-        with mock.patch("src.verify_emails.find_hrw_user_by_email") as mock_find:
+        with mock.patch("hrcc_bot.services.verify_emails.find_hrw_user_by_email") as mock_find:
             mock_find.return_value = {"user_id": "123", "email": "alice@hrw.com"}
             result = asyncio.run(run_full_verification(csv_content, "Test Event"))
 
@@ -156,7 +156,7 @@ class TestRunFullVerification:
 
     def test_run_full_verification_with_mismatches(self):
         """Test verification pipeline with email mismatches."""
-        from src.verify_emails import run_full_verification
+        from hrcc_bot.services.verify_emails import run_full_verification
         import unittest.mock as mock
 
         csv_content = (
@@ -165,7 +165,7 @@ class TestRunFullVerification:
         )
 
         # Mock HRW API to return a different email for the user
-        with mock.patch("src.verify_emails.find_hrw_user_by_email") as mock_find:
+        with mock.patch("hrcc_bot.services.verify_emails.find_hrw_user_by_email") as mock_find:
             mock_find.return_value = {"user_id": "123", "email": "alice@hrw.com"}
             result = asyncio.run(run_full_verification(csv_content, "Test Event"))
 

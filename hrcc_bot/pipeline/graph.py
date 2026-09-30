@@ -11,10 +11,10 @@ from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 
-from src.knowledge import build_context_block, get_reward_tier
-from src.llm_client import get_classifier_llm, get_llm
-from src.prompts.template_manager import get_template_manager
-from src.rubrics import (
+from hrcc_bot.pipeline.knowledge import build_context_block, get_reward_tier
+from hrcc_bot.core.llm_client import get_classifier_llm, get_llm
+from hrcc_bot.pipeline.prompts.template_manager import get_template_manager
+from hrcc_bot.pipeline.rubrics import (
     chunk_message,
     contains_chakra_reference,
     detect_escalation_target,
@@ -25,8 +25,8 @@ from src.rubrics import (
     is_platform_ambiguous,
     scrub_secrets,
 )
-from src.escalation import resolve_lead
-from src.tools import ALL_TOOLS, ESCALATION_TOOL_NAME
+from hrcc_bot.services.escalation import resolve_lead
+from hrcc_bot.pipeline.tools import ALL_TOOLS, ESCALATION_TOOL_NAME
 
 log = logging.getLogger("hrcc.graph")
 
@@ -273,7 +273,7 @@ async def auditor_node(state: PipelineState) -> dict[str, Any]:
 def extract_escalation_request(state: PipelineState) -> dict[str, str] | None:
     """Return the first valid escalation the replier asked for, or None.
 
-    The escalation tool only prepares a request; ``bot.py`` turns it into a
+    The escalation tool only prepares a request; ``app.py`` turns it into a
     Confirm Dispatch button so the ambassador decides whether the lead is pinged.
     """
     for msg in state.get("messages") or []:

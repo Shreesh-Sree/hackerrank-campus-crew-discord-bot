@@ -7,12 +7,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from src.config import settings
+from hrcc_bot.config import settings
+from hrcc_bot.paths import PROJECT_ROOT
 
 log = logging.getLogger("hrcc.db")
 
-_ROOT = Path(__file__).resolve().parent.parent
-_SQLITE_PATH: Path = _ROOT / settings.db_path
+_SQLITE_PATH: Path = PROJECT_ROOT / settings.db_path
 
 _local = threading.local()
 

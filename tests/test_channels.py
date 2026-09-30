@@ -6,8 +6,8 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.channels import ChannelMode, get_channel_mode, parse_channel_ids
-from src.config import settings
+from hrcc_bot.bot.channels import ChannelMode, get_channel_mode, parse_channel_ids
+from hrcc_bot.config import settings
 
 
 class TestParseChannelIds:

@@ -7,7 +7,7 @@ import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
-from src.config import settings
+from hrcc_bot.config import settings
 
 log = logging.getLogger("hrcc.llm")
 

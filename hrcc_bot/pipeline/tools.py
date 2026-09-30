@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from langchain_core.tools import tool
 
-from src.db import (
+from hrcc_bot.core.db import (
     get_ambassador_events,
     get_ticket,
 )
-from src.escalation import POC_DISPLAY, resolve_lead
-from src.knowledge import get_reward_tier, retrieve_relevant_chunks
+from hrcc_bot.services.escalation import POC_DISPLAY, resolve_lead
+from hrcc_bot.pipeline.knowledge import get_reward_tier, retrieve_relevant_chunks
 
 
 ESCALATION_TOOL_NAME = "create_escalation_ticket"
@@ -101,7 +101,7 @@ def lookup_ambassador_profile(ambassador_id: int) -> str:
     Args:
         ambassador_id: The Discord user ID of the ambassador.
     """
-    from src.db import get_ambassador_events as _get_events
+    from hrcc_bot.core.db import get_ambassador_events as _get_events
 
     events = _get_events(ambassador_id)
     if not events:

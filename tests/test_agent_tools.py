@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.db import (
+from hrcc_bot.core.db import (
     close_db,
     create_ticket,
     get_ambassador_events,
@@ -20,7 +20,7 @@ from src.db import (
     update_ambassador_stage,
     upsert_ambassador_profile,
 )
-from src.tools import (
+from hrcc_bot.pipeline.tools import (
     calculate_reward_tier,
     create_escalation_ticket,
     lookup_ambassador_profile,
@@ -31,7 +31,7 @@ from src.tools import (
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     test_db = tmp_path / "test.db"
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", test_db)
@@ -44,7 +44,7 @@ def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 class TestToolCreateTicket:
     def test_prepares_escalation_without_creating_ticket(self) -> None:
-        from src.db import get_ticket_stats
+        from hrcc_bot.core.db import get_ticket_stats
 
         result = create_escalation_ticket.invoke(
             {"category": "TECH", "urgency": "P1", "description": "HRW login broken", "poc_name": "sreesanth"}
@@ -94,7 +94,7 @@ class TestToolRewardTier:
 
 class TestToolHandbookSearch:
     def test_returns_results(self) -> None:
-        from src.knowledge import load_references
+        from hrcc_bot.pipeline.knowledge import load_references
         load_references()
         result = search_handbook_knowledge.invoke({"query": "HRW assessment contest setup"})
         assert isinstance(result, str)
@@ -180,7 +180,7 @@ class TestConversationPersistence:
         assert turns_300[0]["content"] == "from user 300"
 
     def test_context_memory_integration(self) -> None:
-        from src.context import ConversationMemory
+        from hrcc_bot.pipeline.context import ConversationMemory
         mem = ConversationMemory()
         mem.add_user_message(400, "test message")
         mem.add_assistant_message(400, "test reply")

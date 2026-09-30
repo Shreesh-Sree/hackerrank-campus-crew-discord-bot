@@ -8,10 +8,10 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.config import settings
-from src.context import ConversationMemory
-from src.csv_validator import parse_contest_csv
-from src.db import (
+from hrcc_bot.config import settings
+from hrcc_bot.pipeline.context import ConversationMemory
+from hrcc_bot.services.csv_validator import parse_contest_csv
+from hrcc_bot.core.db import (
     close_db,
     create_ticket,
     get_ambassador_events,
@@ -21,7 +21,7 @@ from src.db import (
     record_event_submission,
     update_ticket_status,
 )
-from src.knowledge import (
+from hrcc_bot.pipeline.knowledge import (
     build_context_block,
     check_and_reload,
     load_knowledge,
@@ -29,7 +29,7 @@ from src.knowledge import (
     reload_all,
     retrieve_relevant_chunks,
 )
-from src.rubrics import detect_escalation_target
+from hrcc_bot.pipeline.rubrics import detect_escalation_target
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ from src.rubrics import detect_escalation_target
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     test_db = tmp_path / "test_hrcc.db"
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", test_db)
@@ -53,7 +53,7 @@ def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 class TestDatabase:
     def test_init_creates_tables(self) -> None:
-        import src.db as db_mod
+        import hrcc_bot.core.db as db_mod
 
         conn = sqlite3.connect(str(db_mod._SQLITE_PATH))
         tables = conn.execute(
@@ -65,7 +65,7 @@ class TestDatabase:
         conn.close()
 
     def test_init_creates_indexes(self) -> None:
-        import src.db as db_mod
+        import hrcc_bot.core.db as db_mod
 
         conn = sqlite3.connect(str(db_mod._SQLITE_PATH))
         indexes = conn.execute(
@@ -360,11 +360,11 @@ class TestConversationMemory:
 
 class TestEscalationCooldown:
     def test_no_cooldown_on_first_ticket(self) -> None:
-        from src.db import get_recent_tickets
+        from hrcc_bot.core.db import get_recent_tickets
         assert len(get_recent_tickets(author_id=999, category="TECH", hours=2)) == 0
 
     def test_cooldown_after_ticket_created(self) -> None:
-        from src.db import get_recent_tickets
+        from hrcc_bot.core.db import get_recent_tickets
         create_ticket(
             channel_id=10, message_id=20, author_id=555, author_name="CooldownTest",
             category="TECH", urgency="P1", poc_name="sreesanth",
@@ -372,7 +372,7 @@ class TestEscalationCooldown:
         assert len(get_recent_tickets(author_id=555, category="TECH", hours=2)) >= 1
 
     def test_different_category_no_cooldown(self) -> None:
-        from src.db import get_recent_tickets
+        from hrcc_bot.core.db import get_recent_tickets
         create_ticket(
             channel_id=10, message_id=20, author_id=666, author_name="CatTest",
             category="OPS", urgency="P2", poc_name="sanskruti",
@@ -380,7 +380,7 @@ class TestEscalationCooldown:
         assert len(get_recent_tickets(author_id=666, category="TECH", hours=2)) == 0
 
     def test_resolved_tickets_dont_block(self) -> None:
-        from src.db import get_recent_tickets
+        from hrcc_bot.core.db import get_recent_tickets
         t = create_ticket(
             channel_id=10, message_id=20, author_id=777, author_name="ResolveTest",
             category="TECH", urgency="P1", poc_name="sreesanth",
@@ -394,17 +394,17 @@ class TestEscalationCooldown:
 
 class TestEscalationRouterDetection:
     def test_p0_urgency(self) -> None:
-        from src.escalation import _classify_urgency
+        from hrcc_bot.services.escalation import _classify_urgency
         assert _classify_urgency("contest is live and students getting 500 error") == "P0"
         assert _classify_urgency("this is urgent! event starts in 30 minutes") == "P0"
 
     def test_p1_urgency(self) -> None:
-        from src.escalation import _classify_urgency
+        from hrcc_bot.services.escalation import _classify_urgency
         assert _classify_urgency("My HRW invitation is still pending") == "P1"
         assert _classify_urgency("reward not activated for winners") == "P1"
 
     def test_p2_urgency(self) -> None:
-        from src.escalation import _classify_urgency
+        from hrcc_bot.services.escalation import _classify_urgency
         assert _classify_urgency("Can I get the certificate template?") == "P2"
 
     def test_escalation_targets(self) -> None:
@@ -418,13 +418,13 @@ class TestEscalationRouterDetection:
 
 class TestRateLimiter:
     def test_allows_normal_traffic(self) -> None:
-        from bot import _check_rate_limit, _rate_buckets
+        from hrcc_bot.app import _check_rate_limit, _rate_buckets
         _rate_buckets.clear()
         for _ in range(5):
             assert _check_rate_limit(12345) is True
 
     def test_blocks_flood(self) -> None:
-        from bot import _check_rate_limit, _rate_buckets
+        from hrcc_bot.app import _check_rate_limit, _rate_buckets
         _rate_buckets.clear()
         for _ in range(settings.rate_limit_per_minute):
             _check_rate_limit(99999)
@@ -436,7 +436,7 @@ class TestRateLimiter:
 
 class TestGraphPipeline:
     def test_state_has_conversation_history(self) -> None:
-        from src.graph import PipelineState
+        from hrcc_bot.pipeline.graph import PipelineState
         state: PipelineState = {
             "message_content": "test", "author_name": "test", "author_id": 1,
             "channel_id": 1, "is_dm": False, "is_mention": False, "is_bot": False,
@@ -445,7 +445,7 @@ class TestGraphPipeline:
         assert state["conversation_history"][0]["role"] == "user"
 
     def test_skillup_hosting_regex(self) -> None:
-        from src.graph import _SKILLUP_HOST_RE
+        from hrcc_bot.pipeline.graph import _SKILLUP_HOST_RE
         assert _SKILLUP_HOST_RE.search("Can I host my contest on SkillUp?")
         assert _SKILLUP_HOST_RE.search("I want to use skillup for my hackathon")
         assert not _SKILLUP_HOST_RE.search("What is SkillUp?")

@@ -6,7 +6,7 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.prompts.template_manager import get_template_manager
+from hrcc_bot.pipeline.prompts.template_manager import get_template_manager
 
 
 class TestCuratorPromptRendering:

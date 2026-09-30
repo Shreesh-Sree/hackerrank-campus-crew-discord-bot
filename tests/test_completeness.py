@@ -7,8 +7,8 @@ import pytest
 
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 
-from src.csv_validator import build_event_report, parse_contest_csv
-from src.db import (
+from hrcc_bot.services.csv_validator import build_event_report, parse_contest_csv
+from hrcc_bot.core.db import (
     ACHIEVEMENT_DEFS,
     award_points,
     check_and_grant_achievements,
@@ -24,7 +24,7 @@ from src.db import (
 
 @pytest.fixture(autouse=True)
 def _use_temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.db as db_mod
+    import hrcc_bot.core.db as db_mod
 
     test_db = tmp_path / "test.db"
     monkeypatch.setattr(db_mod, "_SQLITE_PATH", test_db)
@@ -167,6 +167,6 @@ class TestComplianceNudge:
 
 class TestDBMigrations:
     def test_migrations_run_without_error(self) -> None:
-        from src.db import _apply_migrations
+        from hrcc_bot.core.db import _apply_migrations
         _apply_migrations()
         _apply_migrations()

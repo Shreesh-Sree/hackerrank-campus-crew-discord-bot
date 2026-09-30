@@ -8,8 +8,8 @@ from typing import Any, Callable, Coroutine
 import discord
 from discord import app_commands
 
-from src.config import settings
-from src.db import get_hrw_link, is_moderator
+from hrcc_bot.config import settings
+from hrcc_bot.core.db import get_hrw_link, is_moderator
 
 log = logging.getLogger("hrcc.auth")
 
