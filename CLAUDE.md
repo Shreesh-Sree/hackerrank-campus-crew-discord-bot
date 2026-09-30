@@ -56,7 +56,6 @@ Repository: HackerRank Campus Crew Super Agent (`hrcc_bot`) at `/data/production
   - `bot/` — Discord surface: slash commands, auth gate, channel modes, interactive views.
 - `knowledge/` — handbook YAML + reference markdown (hot-reloaded; mounted read-only in the container).
 - `deploy/` — systemd unit and deploy scripts. `docs/` — `architecture/`, `operations/`, `legal/`.
-- Root `bot.py` is only a compatibility launcher for the old systemd `ExecStart`; delete it once the unit in `deploy/` is installed.
 
 ### How the Code Fits Together
 - **Entry point (`hrcc_bot/app.py`, run as `python -m hrcc_bot`):** Discord lifecycle, per-user rate limiting/locks, `on_message` handling, and background tasks. Calls `init_db()`, `register_commands(bot.tree)` (`hrcc_bot/bot/commands.py`), and `setup_scheduler(bot)`. Image attachments go to `hrcc_bot/pipeline/vision.py`; text goes through the LangGraph pipeline.

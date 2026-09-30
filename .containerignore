@@ -15,6 +15,5 @@ data/*.db-wal
 data/*.db-shm
 *.log
 deploy/
-bot.py
 requirements-dev.txt
 .env.example
