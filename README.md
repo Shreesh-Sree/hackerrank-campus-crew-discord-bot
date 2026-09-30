@@ -2,7 +2,7 @@
 
 An autonomous, production-grade Discord agent for the **HackerRank Campus Crew** global ambassador program. Built with **LangGraph**, **LangChain**, and **discord.py**, powered by local **vLLM** inference with **HackerRank for Work API** integration.
 
-**59 source files | 12,549 lines | 56 slash commands | 12 database tables | 374 tests | 5-tier RBAC**
+**79 source files | 13,593 lines | 56 slash commands | 12 database tables | 412 tests | 5-tier RBAC**
 
 The agent manages the complete ambassador lifecycle across 60+ countries — onboarding, identity verification, event planning, real-time contest monitoring, automated reward calculation, certificate generation, gamification, cross-border collaboration, and program analytics — while enforcing strict operational boundaries from the official Ambassador Handbook.
 
@@ -414,7 +414,9 @@ hrcc_bot/
 │   ├── core/                           # Infrastructure
 │   │   ├── db.py                       # Dual PostgreSQL/SQLite — 12 tables, migrations, failover
 │   │   ├── llm_client.py               # vLLM → NIM/Ollama failover (ResilientChatModel)
-│   │   ├── health.py                   # Per-engine inference probes + outage alerting
+│   │   ├── health.py                   # Inference + database health monitors and alert text
+│   │   ├── privacy.py                  # User data export/deletion, retention purge
+│   │   ├── migrate_to_postgres.py      # SQLite → Postgres copy after a failover
 │   │   └── audit_log.py                # Audit log queries, search, CSV export
 │   ├── pipeline/                       # Natural-language pipeline
 │   │   ├── graph.py                    # 6-node LangGraph ReAct pipeline
@@ -434,8 +436,12 @@ hrcc_bot/
 │   │   ├── verify_emails.py            # Bulk winner email verification against HRW
 │   │   └── scheduler.py                # Reminders, weekly digest, compliance nudges
 │   └── bot/                            # Discord surface
-│       ├── commands.py                 # 56 slash commands across 5 role tiers
-│       ├── auth_gate.py                # 5-tier RBAC — role resolver, @require_role, gate check
+│       ├── commands/                   # 56 slash commands, one module per role tier
+│       │   ├── public.py  ambassador.py  community.py
+│       │   ├── moderation.py  admin.py  owner.py
+│       │   └── _common.py              # Shared embeds, views, lookups
+│       ├── auth_gate.py                # 5-tier RBAC — GatedCommandTree, role resolver, data-access rule
+│       ├── privacy_views.py            # /my_data export + confirm-before-delete views
 │       ├── channels.py                 # Per-channel reply modes
 │       ├── escalation_views.py         # Confirm Dispatch + Acknowledge/Reply/Resolve buttons
 │       ├── letter_views.py             # Letter approval buttons for leads
@@ -443,7 +449,7 @@ hrcc_bot/
 ├── knowledge/
 │   ├── knowledge_data.yaml             # Canonical handbook rules (YAML knowledge tree)
 │   └── references/                     # Official handbook, SOPs, templates, FAQs (4 docs)
-├── tests/                              # 374 tests across 22 test files
+├── tests/                              # 412 tests across 25 test files (4 need HRCC_TEST_PG_URL)
 ├── deploy/
 │   ├── deploy.sh                       # Automated pull → install → test → restart (systemd)
 │   ├── podman-deploy.sh                # Container build + Postgres stack
@@ -523,5 +529,5 @@ sudo systemctl enable --now hrcc-bot
 | **Configuration** | Pydantic Settings v2 with .env |
 | **Knowledge Base** | YAML + 4 Markdown docs with keyword-scored retrieval |
 | **Spreadsheet Parsing** | csv + openpyxl (CSV and XLSX) |
-| **Testing** | pytest — 374 tests across 22 files |
+| **Testing** | pytest — 412 tests across 25 files; GitHub Actions CI with Postgres |
 | **Deployment** | systemd + bash deploy script |
