@@ -17,10 +17,10 @@ from hrcc_bot.config import settings
 from hrcc_bot.pipeline.context import memory
 from hrcc_bot.services.cert_generator import build_cert_preview_file
 from hrcc_bot.services.csv_validator import build_canva_file, build_event_report, build_summary_embed, parse_contest_csv
-from hrcc_bot.core.db import ACHIEVEMENT_DEFS, award_points, check_and_grant_achievements, close_db, init_db, log_audit, record_event_submission
+from hrcc_bot.core.db import ACHIEVEMENT_DEFS, db_status, postgres_reachable, award_points, check_and_grant_achievements, close_db, init_db, log_audit, record_event_submission
 from hrcc_bot.bot.escalation_views import ConfirmDispatchView, PersistentTicketView
 from hrcc_bot.core.privacy import purge_expired
-from hrcc_bot.core.health import EngineProbe, HealthMonitor, format_alert, probe_engine
+from hrcc_bot.core.health import DbMonitor, EngineProbe, HealthMonitor, format_alert, format_db_alert, probe_engine
 from hrcc_bot.pipeline.graph import PipelineState, extract_escalation_request, get_pipeline
 from hrcc_bot.pipeline.incident_cluster import incident_engine
 from hrcc_bot.services.escalation import escalate_incident, incident_notice
@@ -96,6 +96,7 @@ async def on_ready() -> None:
 
 
 _health_monitor = HealthMonitor(failure_threshold=settings.health_alert_threshold)
+_db_monitor = DbMonitor()
 
 
 def _health_engines() -> list[EngineProbe]:
@@ -144,6 +145,18 @@ async def health_loop() -> None:
     if alert:
         text = format_alert(alert, results, settings.health_check_interval, _health_monitor.failure_threshold)
         log.error("[HEALTH] %s", text.replace("\n", " | "))
+        await _send_health_alert(text)
+
+    status = db_status()
+    reachable: bool | None = None
+    if status["configured_postgres"] and status["active"] == "sqlite":
+        reachable = await asyncio.to_thread(postgres_reachable)
+    db_alert = _db_monitor.evaluate(
+        configured_postgres=status["configured_postgres"], active=status["active"], postgres_reachable=reachable,
+    )
+    if db_alert:
+        text = format_db_alert(db_alert, status["failover_since"])
+        log.warning("[HEALTH] %s", text)
         await _send_health_alert(text)
 
 

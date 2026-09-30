@@ -96,3 +96,40 @@ def format_alert(kind: str, results: dict[str, ProbeResult], interval_s: int, th
     else:
         head = "**HRCC bot recovered:** at least one inference engine is healthy again."
     return head + "\n" + "\n".join(lines)
+
+
+class DbMonitor:
+    """Decides when to alert about the database backend (one alert per state change)."""
+
+    ALERT_STATES = {"failover", "postgres_back"}
+
+    def __init__(self) -> None:
+        self.state: str | None = None
+
+    def evaluate(self, *, configured_postgres: bool, active: str, postgres_reachable: bool | None) -> str | None:
+        if not configured_postgres or active == "postgres":
+            state = "ok"
+        elif postgres_reachable:
+            state = "postgres_back"
+        else:
+            state = "failover"
+        previous, self.state = self.state, state
+        if state == previous:
+            return None
+        if state in self.ALERT_STATES:
+            return state
+        return None
+
+
+def format_db_alert(state: str, since: str | None) -> str:
+    since_txt = f" since {since[:19].replace('T', ' ')} UTC" if since else ""
+    if state == "failover":
+        return (
+            f"**HRCC bot alert:** PostgreSQL is unreachable, so the bot is running on its SQLite fallback{since_txt}. "
+            "Everything still works; new data is stored only in SQLite until it is migrated."
+        )
+    return (
+        f"**HRCC bot:** PostgreSQL is reachable again, but the bot stays on SQLite because it holds writes "
+        f"made{since_txt} that Postgres doesn't have. To switch back without losing them, run "
+        "`python -m hrcc_bot.core.migrate_to_postgres --dry-run`, then without `--dry-run`, then restart the bot."
+    )

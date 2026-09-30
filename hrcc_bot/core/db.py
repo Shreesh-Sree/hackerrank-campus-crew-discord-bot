@@ -73,6 +73,45 @@ def _get_pg_conn():
     return conn
 
 
+def _failover_marker() -> Path:
+    """Marker file: SQLite holds writes that PostgreSQL does not have yet."""
+    return _SQLITE_PATH.with_name(_SQLITE_PATH.name + ".pg_pending")
+
+
+def failover_pending_since() -> str | None:
+    marker = _failover_marker()
+    try:
+        return marker.read_text().strip() or "unknown"
+    except FileNotFoundError:
+        return None
+
+
+def clear_failover_marker() -> None:
+    _failover_marker().unlink(missing_ok=True)
+
+
+def db_status() -> dict[str, Any]:
+    return {
+        "configured_postgres": _is_postgres(),
+        "active": "postgres" if _using_postgres else "sqlite",
+        "failover_since": failover_pending_since(),
+    }
+
+
+def postgres_reachable() -> bool:
+    """Blocking connectivity probe (bounded by PG_CONNECT_TIMEOUT); call off the event loop."""
+    if not _is_postgres():
+        return False
+    try:
+        import psycopg
+
+        with psycopg.connect(settings.database_url, connect_timeout=settings.pg_connect_timeout) as conn:
+            conn.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
 def _pg_failover(exc: Exception) -> None:
     """Switch from PostgreSQL to the persistent SQLite store after a connection failure.
 
@@ -98,6 +137,16 @@ def _pg_failover(exc: Exception) -> None:
         except Exception:
             pass
         _local.pg_conn = None
+
+    # Record that SQLite now diverges from Postgres, so a later restart doesn't
+    # silently switch back and hide these writes.
+    try:
+        marker = _failover_marker()
+        if not marker.exists():
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(_now_iso())
+    except OSError:
+        log.exception("[DB FAILOVER] Could not write failover marker")
 
     # Make sure the SQLite schema exists before routing traffic to it.
     try:
@@ -518,7 +567,14 @@ _PG_SCHEMA = """
 def init_db() -> None:
     global _using_postgres
 
-    if _is_postgres():
+    pending = failover_pending_since() if _is_postgres() else None
+    if pending:
+        log.warning(
+            "[DB FAILOVER] SQLite holds writes made since %s that are not in PostgreSQL; staying on SQLite. "
+            "Migrate with `python -m hrcc_bot.core.migrate_to_postgres`, then restart.",
+            pending,
+        )
+    elif _is_postgres():
         _using_postgres = True
         try:
             conn = _get_pg_conn()
